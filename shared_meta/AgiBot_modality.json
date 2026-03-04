@@ -1,84 +1,151 @@
 {
     "state": {
         "left_arm_joint_position": {
+            "original_key": "observation.state",
             "start": 0,
-            "end": 7
+            "end": 7,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "right_arm_joint_position": {
+            "original_key": "observation.state",
             "start": 7,
-            "end": 14
+            "end": 14,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "left_effector_position": {
+            "original_key": "observation.state",
             "start": 14,
-            "end": 15
+            "end": 15,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "right_effector_position": {
+            "original_key": "observation.state",
             "start": 15,
-            "end": 16
+            "end": 16,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "head_position": {
+            "original_key": "observation.state",
             "start": 16,
-            "end": 18
-        },
-        "waist_position": {
-            "start": 18,
-            "end": 20
+            "end": 18,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "waist_pitch": {
+            "original_key": "observation.state",
             "start": 18,
-            "end": 19
+            "end": 19,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "waist_lift": {
+            "original_key": "observation.state",
             "start": 19,
-            "end": 20
+            "end": 20,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         }
     },
     "action": {
         "left_arm_joint_position": {
+            "original_key": "action",
             "start": 0,
-            "end": 7
+            "end": 7,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "right_arm_joint_position": {
+            "original_key": "action",
             "start": 7,
-            "end": 14
+            "end": 14,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "left_effector_position": {
+            "original_key": "action",
             "start": 14,
-            "end": 15
+            "end": 15,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "right_effector_position": {
+            "original_key": "action",
             "start": 15,
-            "end": 16
+            "end": 16,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "head_position": {
+            "original_key": "action",
             "start": 16,
-            "end": 18
-        },
-        "waist_position": {
-            "start": 18,
-            "end": 20
+            "end": 18,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "waist_pitch": {
+            "original_key": "action",
             "start": 18,
-            "end": 19
+            "end": 19,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "waist_lift": {
+            "original_key": "action",
             "start": 19,
-            "end": 20
+            "end": 20,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         },
         "robot_velocity": {
+            "original_key": "action",
             "start": 20,
-            "end": 22
+            "end": 22,
+            "rotation_type": null,
+            "absolute": true,
+            "dtype": "float64",
+            "range": null
         }
     },
     "video": {
-        "top_head_pad_res256_freq10": {
+        "top_head": {
             "original_key": "observation.images.top_head"
         },
-        "hand_left_pad_res256_freq10": {
+        "hand_left": {
             "original_key": "observation.images.hand_left"
         },
-        "hand_right_pad_res256_freq10": {
+        "hand_right": {
             "original_key": "observation.images.hand_right"
         }
     },
@@ -86,8 +153,11 @@
         "language.action_text": {
             "original_key": "task_index"
         },
-        "agibot.tasks": {
-            "original_key": "annotation.agibot.tasks"
+        "agibot.sub_task": {
+            "original_key": "annotation.agibot.sub_task"
+        },
+        "frame_type": {
+            "original_key": "annotation.frame_type"
         }
     }
 }

@@ -254,8 +254,8 @@ class LeRobotSingleDataset(Dataset):
                     modality_meta_path = Path("shared_meta/GR1_unified_modality.json")
                     print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/GR1_unified_modality.json")
             elif embodiment_tag == EmbodimentTag.AGIBOT:
-                modality_meta_path = Path("/mnt/amlfs-03/shared/datasets/agibot-custom-converted-1104-fullres/agibot.1106_OTJ_laundry/meta/modality.json")
-                print("WARNING: Could not find modality.json in dataset path, falling back to /mnt/amlfs-03/shared/datasets/agibot-custom-converted-1104-fullres/agibot.1106_OTJ_laundry/meta/modality.json")
+                modality_meta_path = Path("shared_meta/AgiBot_modality.json")
+                print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/AgiBot_modality.json")
             elif embodiment_tag == EmbodimentTag.G1:
                 modality_meta_path = Path("shared_meta/G1_modality.json")
                 print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/G1_modality.json")
@@ -471,8 +471,8 @@ class LeRobotSingleDataset(Dataset):
                     modality_meta_path = Path("shared_meta/GR1_unified_modality.json")
                     print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/GR1_unified_modality.json")
             elif self.tag == "agibot":
-                modality_meta_path = Path("/mnt/amlfs-03/shared/datasets/agibot-custom-converted-1104-fullres/agibot.1106_OTJ_laundry/meta/modality.json")
-                print("WARNING: Could not find modality.json in dataset path, falling back to /mnt/amlfs-03/shared/datasets/agibot-custom-converted-1104-fullres/agibot.1106_OTJ_laundry/meta/modality.json")
+                modality_meta_path = Path("shared_meta/AgiBot_modality.json")
+                print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/AgiBot_modality.json")
             elif self.tag == "g1":
                 modality_meta_path = Path("shared_meta/G1_modality.json")
                 print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/G1_modality.json")
