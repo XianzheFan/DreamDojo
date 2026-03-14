@@ -22,7 +22,9 @@ from hydra.core.config_store import ConfigStore
 
 from cosmos_predict2._src.imaginaire.lazy_config import LazyCall as L
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
-from cosmos_predict2._src.imaginaire.utils.context_parallel import broadcast_split_tensor
+from einops import rearrange
+
+from cosmos_predict2._src.imaginaire.utils.context_parallel import broadcast_split_tensor, find_split
 from cosmos_predict2._src.predict2.conditioner import (
     BooleanFlag,
     GeneralConditioner,
@@ -151,13 +153,30 @@ class Video2WorldCondition(Text2WorldCondition):
         )
 
         kwargs = new_condition.to_dict(skip_underscore=False)
-        _, _, T, _, _ = gt_frames.shape
+        _, _, T, H, W = gt_frames.shape
         if process_group is not None:
-            if T > 1 and process_group.size() > 1:
+            cp_size = process_group.size()
+            if T > 1 and cp_size > 1:
+                use_spatial_split = cp_size > T or T % cp_size != 0
+                if use_spatial_split:
+                    after_split_shape = find_split(gt_frames.shape, cp_size)
+                    gt_frames = rearrange(gt_frames, "B C T H W -> B C (T H W)")
+                    condition_video_input_mask_B_C_T_H_W = rearrange(
+                        condition_video_input_mask_B_C_T_H_W, "B C T H W -> B C (T H W)"
+                    )
                 gt_frames = broadcast_split_tensor(gt_frames, seq_dim=2, process_group=process_group)
                 condition_video_input_mask_B_C_T_H_W = broadcast_split_tensor(
                     condition_video_input_mask_B_C_T_H_W, seq_dim=2, process_group=process_group
                 )
+                if use_spatial_split:
+                    gt_frames = rearrange(
+                        gt_frames, "B C (T H W) -> B C T H W",
+                        T=after_split_shape[0], H=after_split_shape[1]
+                    )
+                    condition_video_input_mask_B_C_T_H_W = rearrange(
+                        condition_video_input_mask_B_C_T_H_W, "B C (T H W) -> B C T H W",
+                        T=after_split_shape[0], H=after_split_shape[1]
+                    )
         kwargs["gt_frames"] = gt_frames
         kwargs["condition_video_input_mask_B_C_T_H_W"] = condition_video_input_mask_B_C_T_H_W
         return type(self)(**kwargs)

@@ -102,7 +102,8 @@ class LeRobotSingleDataset(Dataset):
             embodiment_tag (EmbodimentTag): Overload the embodiment tag for the dataset. e.g. define it as "new_embodiment"
         """
         # first check if the path directory exists
-        if not Path(dataset_path).exists():
+        dataset_path = Path(dataset_path).expanduser()
+        if not dataset_path.exists():
             raise FileNotFoundError(f"Dataset path {dataset_path} does not exist")
 
         self.modality_configs = modality_configs
@@ -262,6 +263,12 @@ class LeRobotSingleDataset(Dataset):
             elif embodiment_tag == EmbodimentTag.YAM:
                 modality_meta_path = Path("shared_meta/YAM_modality.json")
                 print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/YAM_modality.json")
+            elif embodiment_tag == EmbodimentTag.LIBERO:
+                modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
+                print("NOTE: LIBERO dataset; expecting modality.json inside dataset directory")
+            elif embodiment_tag == EmbodimentTag.AGILEX:
+                modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
+                print("NOTE: AGILEX dataset; expecting modality.json inside dataset directory")
             else:
                 raise ValueError(f"Embodiment tag {embodiment_tag} not supported")
         assert (
@@ -342,6 +349,13 @@ class LeRobotSingleDataset(Dataset):
         elif embodiment_tag == EmbodimentTag.YAM:
             default_stats_path = Path("shared_meta/YAM_stats.json")
             default_modality_meta_path = Path("shared_meta/YAM_modality.json")
+        elif embodiment_tag == EmbodimentTag.LIBERO:
+            # stats.json is written by the collection script inside the dataset dir;
+            # no shared default — calculate on the fly if missing.
+            has_default_meta = False
+        elif embodiment_tag == EmbodimentTag.AGILEX:
+            # stats.json is written inside the dataset dir; no shared default.
+            has_default_meta = False
         else:
             raise ValueError(f"Embodiment tag {embodiment_tag} not supported")
         if has_default_meta:
@@ -360,6 +374,11 @@ class LeRobotSingleDataset(Dataset):
             # Get all parquet files in the dataset paths
             parquet_files = list((self.dataset_path).glob(LE_ROBOT_DATA_FILENAME))
             le_statistics = calculate_dataset_statistics(parquet_files)
+            # Save calculated statistics so future runs/workers don't recalculate
+            stats_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(stats_path, "w") as f:
+                json.dump(le_statistics, f)
+            print(f"Saved dataset statistics to {stats_path}")
         dataset_statistics = {}
         for our_modality in ["state", "action"]:
             dataset_statistics[our_modality] = {}
@@ -479,6 +498,15 @@ class LeRobotSingleDataset(Dataset):
             elif self.tag == "yam":
                 modality_meta_path = Path("shared_meta/YAM_modality.json")
                 print("WARNING: Could not find modality.json in dataset path, falling back to shared_meta/YAM_modality.json")
+            elif self.tag == "libero":
+                raise FileNotFoundError(
+                    f"LIBERO dataset at {self.dataset_path} must contain meta/modality.json "
+                    "(generated automatically by collect_dreamdojo_data.py)"
+                )
+            elif self.tag == "agilex":
+                raise FileNotFoundError(
+                    f"AGILEX dataset at {self.dataset_path} must contain meta/modality.json"
+                )
             else:
                 raise ValueError(f"Embodiment tag {self.tag} not supported")
         assert (
@@ -1067,7 +1095,13 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
                 action_seq[:, 101:147] = delta_actions
             elif "agibot" in str(self.dataset_path).lower():
                 action_seq[:, 147:169] = delta_actions
-            
+            elif "libero" in str(self.dataset_path).lower():
+                # LIBERO single-arm 7-DoF: reserved slot [169:176]
+                action_seq[:, 169:176] = delta_actions
+            elif "agilex" in str(self.dataset_path).lower():
+                # AgiLex dual-arm 14-DoF (6+1 gripper per arm): reserved slot [176:190]
+                action_seq[:, 176:190] = delta_actions
+
             text = ""
             if "annotation.human.coarse_action" in original_outputs:
                 text = original_outputs["annotation.human.coarse_action"][0].split(":")[-1].strip()
@@ -1087,10 +1121,17 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
             data["image_size"] = 256 * torch.ones(4).cuda()
             data["num_frames"] = self.num_frames
             data["padding_mask"] = torch.zeros(1, 256, 256).cuda()
-            # Ensure caption key exists for online text encoding
-            # Many models expect `ai_caption` when text_encoder_config.compute_online=True.
-            # Default to an empty string to avoid KeyError; training configs can override upstream.
-            data.setdefault("ai_caption", "")  # Return a single string, not a list
+            # Populate ai_caption from the dataset's task description when available.
+            # LeRobot-format datasets store a task_index column in each parquet row;
+            # self.tasks maps task_index -> task string (loaded from meta/tasks.jsonl).
+            if (
+                self.curr_traj_data is not None
+                and "task_index" in self.curr_traj_data.columns
+            ):
+                task_idx = int(self.curr_traj_data["task_index"].iloc[0])
+                data["ai_caption"] = str(self.tasks.loc[task_idx]["task"])
+            else:
+                data.setdefault("ai_caption", "")
             return data
         except Exception as e:
             print(f"Error occurred while getting item {index} in {self.dataset_name}: {e}")

@@ -23,6 +23,7 @@ from glob import glob
 import piq
 from pathlib import Path
 
+import cv2
 import mediapy
 import numpy as np
 import torch
@@ -265,11 +266,14 @@ def inference(
     mem_bytes = torch.cuda.memory_allocated(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     logger.info(f"GPU memory usage after model load: {mem_bytes / (1024**3):.2f} GB")
 
-    # Only process files on rank 0 if using distributed processing
-    rank0 = True
-    # pyrefly: ignore  # unsupported-operation
-    if setup_args.context_parallel_size > 1:
-        rank0 = distributed.get_rank() == 0
+    # Determine rank and world size for data-parallel evaluation
+    if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+    else:
+        rank = 0
+        world_size = 1
+    rank0 = rank == 0
 
     # Ensure save directory exists
     inference_args.save_root = Path(setup_args.save_dir) / checkpoint_path.parent.name
@@ -287,6 +291,8 @@ def inference(
     )
     # eval_indices = list(range(0, len(dataset), max(len(dataset) // num_samples, 1)))[:num_samples]
     eval_indices = [idx for idx in range(len(dataset)) if not (inference_args.save_root / f"{idx:04d}_psnr.json").exists()]
+    # Each rank processes a different subset of samples (data parallelism)
+    eval_indices = eval_indices[rank::world_size]
 
     all_psnr = []
     all_ssim = []
@@ -380,7 +386,15 @@ def inference(
         if rank0:
             mediapy.write_video(chunk_video_name, chunk_video, fps=inference_args.save_fps)
             mediapy.write_video(str(inference_args.save_root / f"{save_name}_gt.mp4"), gt_video.numpy(), fps=inference_args.save_fps)
-            concat_video = np.concatenate([gt_video.numpy(), chunk_video], axis=2)
+            gt_frames = gt_video.numpy()
+            pred_frames = chunk_video
+            # Add "GT" / "Pred" captions to each frame
+            captioned = []
+            for gt_f, pred_f in zip(gt_frames, pred_frames):
+                gt_f = cv2.putText(gt_f.copy(), "GT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                pred_f = cv2.putText(pred_f.copy(), "Pred", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                captioned.append(np.concatenate([gt_f, pred_f], axis=1))
+            concat_video = np.stack(captioned, axis=0)
             mediapy.write_video(str(inference_args.save_root / f"{save_name}_merged.mp4"), concat_video, fps=inference_args.save_fps)
             np.save(str(inference_args.save_root / f"{save_name}_actions.npy"), actions)
             logger.info(f"Saved video to {chunk_video_name}")
@@ -395,6 +409,15 @@ def inference(
             all_ssim.append(ssim)
             all_lpips.append(lpips)
 
+    # Gather metrics from all ranks before computing summary
+    if world_size > 1:
+        gathered = [None] * world_size
+        torch.distributed.all_gather_object(gathered, (all_psnr, all_ssim, all_lpips))
+        if rank0:
+            all_psnr = [x for psnr_list, _, _ in gathered for x in psnr_list]
+            all_ssim = [x for _, ssim_list, _ in gathered for x in ssim_list]
+            all_lpips = [x for _, _, lpips_list in gathered for x in lpips_list]
+
     if rank0:
         print(f"PSNR: {sum(all_psnr) / len(all_psnr):.3f}")
         print(f"SSIM: {sum(all_ssim) / len(all_ssim):.3f}")
@@ -407,8 +430,7 @@ def inference(
                 }, f)
 
     # Synchronize all processes before cleanup
-    # pyrefly: ignore  # unsupported-operation
-    if setup_args.context_parallel_size > 1:
+    if world_size > 1:
         torch.distributed.barrier()
 
     # Clean up distributed resources

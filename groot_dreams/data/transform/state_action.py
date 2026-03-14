@@ -3,7 +3,7 @@ import random
 from typing import Any, ClassVar
 
 import numpy as np
-import pytorch3d.transforms as pt
+from groot_dreams.data.transform import pytorch3d_compat as pt
 import torch
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 

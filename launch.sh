@@ -13,6 +13,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export FI_EFA_USE_DEVICE_RDMA=1
 export RDMAV_FORK_SAFE=1
 export TORCH_DIST_INIT_BARRIER=1
+export UV_PROJECT_ENVIRONMENT=.venv
 
 # CUDA 12 fix: Force PyTorch to use its bundled CUDA libraries
 export CUDA_MODULE_LOADING=LAZY
@@ -20,13 +21,14 @@ export LD_PRELOAD=""  # Clear any preloaded libraries
 
 echo "Running on $NNODES nodes with $NPROC processes per node. This node rank is $NODE_RANK."
 
-export PYTHONPATH=/mnt/amlfs-01/shared/shenyuang/DreamDojo:$PYTHONPATH
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export PYTHONPATH=$SCRIPT_DIR:$PYTHONPATH
 export OMP_NUM_THREADS=8
-export HF_HOME=/mnt/amlfs-01/shared/shenyuang/cosmos_cache
-export IMAGINAIRE_OUTPUT_ROOT=/mnt/amlfs-01/shared/shenyuang/dreamdojo_logs
-# export WANDB_API_KEY=  # Set your key before removing job.wandb_mode=disabled
+export HF_HOME=/home/zhiqil/workspace/fxz/hf_cache
+export IMAGINAIRE_OUTPUT_ROOT=$SCRIPT_DIR/outputs_0312
+export WANDB_API_KEY=
 
-source /mnt/amlfs-01/shared/shenyuang/DreamDojo/.venv/bin/activate
+source /opt/venv/bin/activate
 
 config_name=$1
 
@@ -35,5 +37,5 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC \
   --node_rank=$NODE_RANK -m scripts.train \
   --config=cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py -- \
   experiment=$config_name \
-  job.wandb_mode=disabled \
+  job.wandb_mode=offline \
   ~dataloader_train.dataloaders

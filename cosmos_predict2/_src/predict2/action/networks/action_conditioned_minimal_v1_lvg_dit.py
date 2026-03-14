@@ -21,6 +21,7 @@ import torch.nn as nn
 from einops import rearrange
 
 from cosmos_predict2._src.imaginaire.utils import log
+from cosmos_predict2._src.imaginaire.utils.context_parallel import split_inputs_cp
 from cosmos_predict2._src.predict2.conditioner import DataType
 from cosmos_predict2._src.predict2.networks.minimal_v4_dit import MiniTrainDIT
 
@@ -271,6 +272,13 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
 
         action_emb_B_D = torch.cat([zero_pad_action_emb_B_D, action_emb_B_D], dim=1)
         action_emb_B_3D = torch.cat([zero_pad_action_emb_B_3D, action_emb_B_3D], dim=1)
+
+        # When context parallelism is active, the latent tensor is split along T.
+        # Split action embeddings to match the per-rank temporal slice so that
+        # adaLN modulation doesn't broadcast (B,T_full,1,1,D) against (B,T_local,H,W,D).
+        if self.pos_embedder._cp_group is not None:
+            action_emb_B_D = split_inputs_cp(action_emb_B_D, seq_dim=1, cp_group=self.pos_embedder._cp_group)
+            action_emb_B_3D = split_inputs_cp(action_emb_B_3D, seq_dim=1, cp_group=self.pos_embedder._cp_group)
 
         # NOTE: adjust the action embedding according to the number of frames
         # if condition_video_input_mask_B_C_T_H_W is not None and data_type == DataType.VIDEO:

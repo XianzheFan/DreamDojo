@@ -102,6 +102,63 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
                 ],
             ),
         }
+    elif embodiment == "libero":
+        # LIBERO single-arm manipulation (pi0.5 rollout data).
+        # Recorded at 10 fps; timestep_interval=2 → every other frame sampled,
+        # covering 14 × 2 / 10 = 2.8 s per window (12 action frames = 2.4 s).
+        # Action slot in DreamDojo's 384-dim vector: [169:176].
+        timestep_interval = 2
+        delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
+        video_key = "video.agentview"
+        config = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[video_key],
+            ),
+            "state": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=[
+                    "state.eef_pos",
+                    "state.eef_rot",
+                    "state.gripper",
+                ],
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=["action.arm"],
+            ),
+        }
+    elif embodiment == "agilex":
+        # AgiLex dual-arm robot: 6 joints + 1 gripper per arm = 14-DoF total.
+        # Recorded at 30 fps; timestep_interval=4 → every 4th frame sampled.
+        # Action slot in DreamDojo's 384-dim vector: [176:190].
+        timestep_interval = 4
+        delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
+        video_key = "video.cam_high"
+        config = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[video_key],
+            ),
+            "state": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=[
+                    "state.left_arm_joint_position",
+                    "state.left_gripper",
+                    "state.right_arm_joint_position",
+                    "state.right_gripper",
+                ],
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[
+                    "action.left_arm_joint_position",
+                    "action.left_gripper",
+                    "action.right_arm_joint_position",
+                    "action.right_gripper",
+                ],
+            ),
+        }
     elif embodiment == "agibot":
         timestep_interval = 4
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))

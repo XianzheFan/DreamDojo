@@ -73,6 +73,7 @@ def init_wandb(config: Config, model: ImaginaireModel) -> None:
         dir=config_job.path_local,
         resume="allow",
         mode=config_job.wandb_mode,
+        settings=wandb.Settings(init_timeout=300),
     )
 
 

@@ -20,6 +20,7 @@ from pathlib import Path
 import pydantic
 import subprocess
 import time
+import torch
 import tyro
 from cosmos_oss.init import cleanup_environment, init_environment, init_output_dir
 
@@ -41,6 +42,7 @@ class Args(pydantic.BaseModel):
 
 
 def convert_checkpoint(checkpoint_iter_dir: Path):
+    # Only needed during training (requires sudo); skip for inference
     subprocess.run(
         ["sudo", "chmod", "-R", "777", str(checkpoint_iter_dir)],
         check=True,
@@ -56,8 +58,10 @@ def convert_checkpoint(checkpoint_iter_dir: Path):
 
 
 def main(args: Args) -> None:
+    print("=== main() entered ===", flush=True)
     inference_args = ActionConditionedInferenceArguments
     init_output_dir(args.setup.output_dir, profile=args.setup.profile)
+    print("=== init_output_dir done ===", flush=True)
 
     from cosmos_predict2.action_conditioned import inference
 
@@ -93,12 +97,18 @@ def main(args: Args) -> None:
         checkpoint_iter_dir = Path(args.setup.checkpoints_dir) / last_checkpoint
         checkpoint_path = checkpoint_iter_dir / "model_ema_bf16.pt"
         if not checkpoint_path.exists():
-            convert_checkpoint(checkpoint_iter_dir)
+            # Only rank 0 converts the checkpoint; other ranks wait
+            if is_rank0():
+                convert_checkpoint(checkpoint_iter_dir)
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
         inference(args.setup, inference_args, checkpoint_path)
 
 
 if __name__ == "__main__":
+    print("=== Script started ===", flush=True)
     init_environment()
+    print("=== init_environment done ===", flush=True)
 
     try:
         args = tyro.cli(
@@ -109,6 +119,7 @@ if __name__ == "__main__":
         )
     except Exception as e:
         handle_tyro_exception(e)
+    print("=== args parsed, calling main ===", flush=True)
     # pyrefly: ignore  # unbound-name
     main(args)
 

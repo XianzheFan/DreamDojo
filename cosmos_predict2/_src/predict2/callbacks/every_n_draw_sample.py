@@ -19,6 +19,7 @@ from contextlib import nullcontext
 from functools import partial
 from typing import List, Optional
 
+import cv2
 import mediapy
 import numpy as np
 import torch
@@ -357,7 +358,12 @@ class EveryNDrawSample(EveryN):
             to_show = to_show[:, 0] * 255  # [n, b, c, t, h, w]
             pred_video = to_show[0].to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
             gt_video = to_show[-1].to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
-            video = np.concatenate([gt_video, pred_video], axis=2)
+            captioned = []
+            for gt_f, pred_f in zip(gt_video, pred_video):
+                gt_f = cv2.putText(gt_f.copy(), "GT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                pred_f = cv2.putText(pred_f.copy(), "Pred", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                captioned.append(np.concatenate([gt_f, pred_f], axis=1))
+            video = np.stack(captioned, axis=0)
             mediapy.write_video(local_path, video, fps=self.fps)
 
             return local_path

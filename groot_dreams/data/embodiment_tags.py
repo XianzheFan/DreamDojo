@@ -6,3 +6,5 @@ class EmbodimentTag(Enum):
     AGIBOT = "agibot"
     G1 = "g1"
     YAM = "yam"
+    LIBERO = "libero"
+    AGILEX = "agilex"

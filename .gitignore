@@ -9,6 +9,7 @@ dist/
 build/
 eggs/
 *.whl
+*.pyc
 
 # Virtual environments
 .venv/
@@ -23,6 +24,7 @@ env/
 *~
 .project
 .settings/
+.history/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
@@ -46,6 +48,10 @@ credentials/
 *.bin
 *.h5
 *.onnx
+*.parquet
+*.distcp
+*.metadata
+datasets/
 
 # Media
 *.mp4
@@ -62,7 +68,13 @@ logs/
 # Debug / Output
 debug/
 output*/
+outputs/
+outputs_0311/
+outputs_0312/
 
 # Launchers (internal)
 osmo_launch.py
 ray_launch.py
+
+# Other
+*.txt
