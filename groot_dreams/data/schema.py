@@ -15,6 +15,7 @@ class RotationType(Enum):
 
     AXIS_ANGLE = "axis_angle"
     QUATERNION = "quaternion"
+    QUATERNION_XYZW = "quaternion_xyzw"
     ROTATION_6D = "rotation_6d"
     MATRIX = "matrix"
     EULER_ANGLES_RPY = "euler_angles_rpy"

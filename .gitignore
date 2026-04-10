@@ -71,6 +71,12 @@ output*/
 outputs/
 outputs_0311/
 outputs_0312/
+outputs_0311_libero/
+outputs_0312_libero/
+outputs_0321_libero_ood/
+outputs_0314_agilex/
+outputs_0315_bridge_simplerenv/
+outputs_0315_fractal_simplerenv/
 
 # Launchers (internal)
 osmo_launch.py
@@ -78,3 +84,4 @@ ray_launch.py
 
 # Other
 *.txt
+*.pdf

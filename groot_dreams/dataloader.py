@@ -12,7 +12,7 @@ from groot_dreams.data.dataset_video import VideoDataset
 
 def is_lerobot_dataset(dataset_path: str) -> bool:
     p = dataset_path.lower()
-    return "gr1" in p or "g1" in p or "yam" in p or "agibot" in p or "libero" in p or "agilex" in p
+    return "gr1" in p or "g1" in p or "yam" in p or "agibot" in p or "libero" in p or "agilex" in p or "fractal" in p or "bridge_orig" in p
 
 
 class VideoActionDataset(torch.utils.data.Dataset):
@@ -157,6 +157,10 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
                     embodiment = "libero"
                 elif "agilex" in path.lower():
                     embodiment = "agilex"
+                elif "bridge_orig" in path.lower():
+                    embodiment = "bridge_orig"
+                elif "fractal" in path.lower():
+                    embodiment = "fractal"
                 else:
                     raise ValueError(f"Cannot infer embodiment from dataset path: {path}")
                 self.datasets.append(VideoActionDataset(

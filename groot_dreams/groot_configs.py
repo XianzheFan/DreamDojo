@@ -159,6 +159,56 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
                 ],
             ),
         }
+    elif embodiment == "bridge_orig":
+        # Bridge V2 original (SimplerEnv): single-arm WidowX, 7-DoF action, 8-dim state.
+        # Recorded at 5 fps; timestep_interval=1 (use every frame).
+        timestep_interval = 1
+        delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
+        video_key = "video.image_0"
+        config = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[video_key],
+            ),
+            "state": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=[
+                    "state.eef_pos",
+                    "state.eef_rot",
+                    "state.pad",
+                    "state.gripper",
+                ],
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=["action.arm"],
+            ),
+        }
+    elif embodiment == "fractal":
+        # Google Fractal (SimplerEnv): single-arm, 7-DoF action, 8-dim state.
+        # Recorded at 3 fps; timestep_interval=1 (use every frame).
+        # Action slot in DreamDojo's 384-dim vector: [190:197].
+        timestep_interval = 1
+        delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
+        video_key = "video.image"
+        config = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[video_key],
+            ),
+            "state": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=[
+                    "state.eef_pos",
+                    "state.eef_quat",
+                    "state.gripper",
+                ],
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=["action.arm"],
+            ),
+        }
     elif embodiment == "agibot":
         timestep_interval = 4
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))

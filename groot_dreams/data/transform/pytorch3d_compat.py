@@ -80,6 +80,18 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     return F.normalize(q, p=2, dim=-1)
 
 
+def quaternion_xyzw_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
+    """Convert quaternions (x, y, z, w) to rotation matrices by reordering to (w, x, y, z)."""
+    quaternions = torch.cat([quaternions[..., 3:], quaternions[..., :3]], dim=-1)
+    return quaternion_to_matrix(quaternions)
+
+
+def matrix_to_quaternion_xyzw(matrix: torch.Tensor) -> torch.Tensor:
+    """Convert rotation matrices to quaternions (x, y, z, w)."""
+    q = matrix_to_quaternion(matrix)  # (w, x, y, z)
+    return torch.cat([q[..., 1:], q[..., :1]], dim=-1)
+
+
 def axis_angle_to_quaternion(axis_angle: torch.Tensor) -> torch.Tensor:
     """Convert axis-angle to quaternions (w, x, y, z)."""
     angles = torch.norm(axis_angle, p=2, dim=-1, keepdim=True)

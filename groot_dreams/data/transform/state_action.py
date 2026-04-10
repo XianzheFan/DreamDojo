@@ -14,7 +14,7 @@ from groot_dreams.data.transform.base import InvertibleModalityTransform, Modali
 class RotationTransform:
     """Adapted from https://github.com/real-stanford/diffusion_policy/blob/548a52bbb105518058e27bf34dcf90bf6f73681a/diffusion_policy/model/common/rotation_transformer.py"""
 
-    valid_reps = ["axis_angle", "euler_angles", "quaternion", "rotation_6d", "matrix"]
+    valid_reps = ["axis_angle", "euler_angles", "quaternion", "quaternion_xyzw", "rotation_6d", "matrix"]
 
     def __init__(self, from_rep="axis_angle", to_rep="rotation_6d"):
         """
@@ -301,6 +301,10 @@ class StateActionTransform(InvertibleModalityTransform):
             "max": [np.pi, np.pi, np.pi],
         },
         "quaternion": {
+            "min": [-1, -1, -1, -1],
+            "max": [1, 1, 1, 1],
+        },
+        "quaternion_xyzw": {
             "min": [-1, -1, -1, -1],
             "max": [1, 1, 1, 1],
         },

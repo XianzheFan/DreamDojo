@@ -30,6 +30,7 @@ Example client call (Python):
 
 import argparse
 import base64
+import json
 import threading
 from pathlib import Path
 
@@ -67,11 +68,15 @@ app = FastAPI(title="DreamDojo API")
 _model: Video2WorldInference | None = None
 _save_dir: Path | None = None
 _cp_size: int = 1
+_fps: int = 10
 # Action preprocessing config (set at startup)
 _action_slot_start  = 169   # where raw actions go in the 384-dim embodiment vector
 _action_slot_end    = 176   # exclusive end index (169:176 = LIBERO 7-DoF)
 _model_action_dim   = 384   # total embodiment vector size
 _model_action_chunk = 12    # num_action_per_chunk expected by model
+# Min-max normalization stats for raw actions (loaded from dataset stats.json)
+_action_min: np.ndarray | None = None  # (raw_dim,)
+_action_max: np.ndarray | None = None  # (raw_dim,)
 
 # Signals for worker ranks in CP mode
 _SIGNAL_EXIT     = torch.tensor([0], dtype=torch.int64)
@@ -81,11 +86,29 @@ _SIGNAL_GENERATE = torch.tensor([1], dtype=torch.int64)
 _inference_lock = threading.Lock()
 
 
+def _normalize_actions(actions: np.ndarray) -> np.ndarray:
+    """Apply min-max normalization to raw actions → [-1, 1], matching training."""
+    if _action_min is None or _action_max is None:
+        return actions  # no stats loaded, pass through
+    denom = _action_max - _action_min
+    denom = np.where(denom < 1e-8, 1.0, denom)  # avoid division by zero
+    normalized = 2.0 * (actions - _action_min) / denom - 1.0
+    return np.clip(normalized, -1.0, 1.0)
+
+
 def _preprocess_actions(actions: np.ndarray) -> torch.Tensor:
     """Map raw (T, raw_dim) actions into (model_action_chunk, model_action_dim) embodiment vector.
 
-    Raw actions are placed at [_action_slot_start:_action_slot_end].
-    The sequence is zero-padded or truncated to exactly _model_action_chunk steps.
+    Training computes *grouped delta* actions (dataset.py:1084-1087):
+        for t in range(1, len(action)-1, 4):
+            delta.append(action[t:t+4] - action[t-1])
+
+    This groups every 4 steps with a shared baseline, aligned to the temporal
+    compression ratio of 4.  We replicate that here.
+
+    The caller supplies T raw actions (up to 12).  We treat them as action[0:T],
+    pad to length 13 by repeating the last action, then compute grouped deltas
+    exactly as training does.
     """
     T, raw_dim = actions.shape
     expected_raw_dim = _action_slot_end - _action_slot_start
@@ -93,9 +116,29 @@ def _preprocess_actions(actions: np.ndarray) -> torch.Tensor:
         f"Expected raw action dim {expected_raw_dim} "
         f"(slot {_action_slot_start}:{_action_slot_end}), got {raw_dim}"
     )
+    # Step 1: normalize to [-1, 1] (same as training StateActionTransform min_max)
+    norm_actions = _normalize_actions(actions.astype(np.float32))  # (T, raw_dim)
+
+    # Step 2: pad to 13 entries (training has num_frames=13 action entries)
+    # Repeat last action to fill up to 13
+    num_entries = _model_action_chunk + 1  # 13
+    if T < num_entries:
+        pad = np.tile(norm_actions[-1:], (num_entries - T, 1))
+        padded = np.concatenate([norm_actions, pad], axis=0)  # (13, raw_dim)
+    else:
+        padded = norm_actions[:num_entries]
+
+    # Step 3: compute grouped deltas (matching training exactly)
+    # range(1, 12, 4) = [1, 5, 9] → 3 groups of 4 = 12 deltas
+    delta_list = []
+    for t in range(1, len(padded) - 1, 4):
+        delta_list.append(padded[t:t + 4] - padded[t - 1])
+    delta_actions = np.concatenate(delta_list, axis=0).astype(np.float32)  # (12, raw_dim)
+
+    # Step 4: place into embodiment vector
     action_seq = np.zeros((_model_action_chunk, _model_action_dim), dtype=np.float32)
-    n = min(T, _model_action_chunk)
-    action_seq[:n, _action_slot_start:_action_slot_end] = actions[:n]
+    n = min(len(delta_actions), _model_action_chunk)
+    action_seq[:n, _action_slot_start:_action_slot_end] = delta_actions[:n]
     return torch.from_numpy(action_seq)
 
 
@@ -207,9 +250,18 @@ def generate(req: GenerateRequest):
         frame_np = cv2.resize(frame_np, (640, 480))
 
     actions   = np.array(req.actions, dtype=np.float32)   # (T, raw_action_dim)
+    # DEBUG: log received actions for diagnostics
+    print(f"[DEBUG] Received actions shape={actions.shape}, "
+          f"abs_mean={np.abs(actions).mean():.4f}, "
+          f"min={actions.min():.4f}, max={actions.max():.4f}", flush=True)
+    print(f"[DEBUG] Actions[0]: {actions[0]}", flush=True)
     model_required_frames = _model.model.tokenizer.get_pixel_num_frames(_model.model.config.state_t)
     vid_input  = _build_vid_input(frame_np, model_required_frames)
     action_t   = _preprocess_actions(actions)              # (model_action_chunk, model_action_dim)
+    # DEBUG: log preprocessed deltas
+    _deltas = action_t[:, _action_slot_start:_action_slot_end].numpy()
+    print(f"[DEBUG] Deltas abs_mean={np.abs(_deltas).mean():.6f}, "
+          f"abs_max={np.abs(_deltas).max():.6f}", flush=True)
 
     with _inference_lock:
         if _cp_size > 1:
@@ -234,7 +286,7 @@ def generate(req: GenerateRequest):
 
     save_path = _save_dir / f"{req.save_name}.mp4"
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    mediapy.write_video(str(save_path), video_np, fps=10)
+    mediapy.write_video(str(save_path), video_np, fps=_fps)
 
     return GenerateResponse(save_path=str(save_path))
 
@@ -257,6 +309,11 @@ def parse_args():
                         help="Total action dim expected by the model (default: 384)")
     parser.add_argument("--model-action-chunk", type=int, default=12,
                         help="num_action_per_chunk expected by the model (default: 12)")
+    parser.add_argument("--fps", type=int, default=10,
+                        help="FPS for saved mp4 videos (should match training data fps, e.g. 3=Fractal, 5=Bridge, 10=LIBERO)")
+    parser.add_argument("--stats-json", type=str, default=None,
+                        help="Path to dataset stats.json for action min-max normalization. "
+                             "If provided, raw actions are normalized to [-1,1] before inference.")
     return parser.parse_args()
 
 
@@ -265,11 +322,24 @@ if __name__ == "__main__":
 
     _save_dir = Path(args.save_dir)
     _cp_size  = args.context_parallel_size
+    _fps      = args.fps
 
     _action_slot_start  = args.action_slot_start
     _action_slot_end    = args.action_slot_end
     _model_action_dim   = args.model_action_dim
     _model_action_chunk = args.model_action_chunk
+
+    # Load action normalization stats if provided
+    if args.stats_json:
+        with open(args.stats_json) as f:
+            stats = json.load(f)
+        _action_min = np.array(stats["action"]["min"], dtype=np.float32)
+        _action_max = np.array(stats["action"]["max"], dtype=np.float32)
+        print(f"[DreamDojo] Loaded action stats from {args.stats_json}")
+        print(f"  action min: {_action_min}")
+        print(f"  action max: {_action_max}")
+    else:
+        print("[DreamDojo] WARNING: No --stats-json provided, actions will NOT be normalized.")
 
     init_environment()
 

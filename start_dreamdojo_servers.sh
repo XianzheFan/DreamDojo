@@ -14,7 +14,9 @@ SAVE_BASE=${SAVE_BASE:-"$DD_DIR/tmp/dd_results"}
 BASE_PORT=${BASE_PORT:-8020}
 NUM_SERVERS=${NUM_SERVERS:-5}
 GPUS_PER_SERVER=${GPUS_PER_SERVER:-1}
-GPU_OFFSET=${GPU_OFFSET:-0} 
+GPU_OFFSET=${GPU_OFFSET:-0}
+FPS=${FPS:-10}
+STATS_JSON=${STATS_JSON:-""}
 
 for i in $(seq 0 $((NUM_SERVERS - 1))); do
     PORT=$((BASE_PORT + i))
@@ -27,12 +29,19 @@ for i in $(seq 0 $((NUM_SERVERS - 1))); do
 
     echo "Starting DreamDojo server $i on GPU(s) $GPU_LIST, port $PORT ..."
 
+    STATS_ARG=""
+    if [ -n "$STATS_JSON" ]; then
+        STATS_ARG="--stats-json $STATS_JSON"
+    fi
+
     if [ "$GPUS_PER_SERVER" -eq 1 ]; then
         CUDA_VISIBLE_DEVICES=$GPU_LIST python "$DD_DIR/examples/dreamdojo_server.py" \
             --checkpoint "$CKPT" \
             --experiment "$EXP" \
             --save-dir "$SAVE_DIR" \
-            --port "$PORT" &
+            --port "$PORT" \
+            --fps "$FPS" \
+            $STATS_ARG &
     else
         CUDA_VISIBLE_DEVICES=$GPU_LIST \
         torchrun --nproc_per_node="$GPUS_PER_SERVER" --master_port="$MASTER_PORT" \
@@ -41,7 +50,9 @@ for i in $(seq 0 $((NUM_SERVERS - 1))); do
             --experiment "$EXP" \
             --save-dir "$SAVE_DIR" \
             --port "$PORT" \
-            --context-parallel-size "$GPUS_PER_SERVER" &
+            --fps "$FPS" \
+            --context-parallel-size "$GPUS_PER_SERVER" \
+            $STATS_ARG &
     fi
 done
 

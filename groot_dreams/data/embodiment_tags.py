@@ -8,3 +8,5 @@ class EmbodimentTag(Enum):
     YAM = "yam"
     LIBERO = "libero"
     AGILEX = "agilex"
+    FRACTAL = "fractal"
+    BRIDGE_ORIG = "bridge_orig"

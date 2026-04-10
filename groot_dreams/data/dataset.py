@@ -269,6 +269,9 @@ class LeRobotSingleDataset(Dataset):
             elif embodiment_tag == EmbodimentTag.AGILEX:
                 modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
                 print("NOTE: AGILEX dataset; expecting modality.json inside dataset directory")
+            elif embodiment_tag == EmbodimentTag.FRACTAL:
+                modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
+                print("NOTE: FRACTAL dataset; expecting modality.json inside dataset directory")
             else:
                 raise ValueError(f"Embodiment tag {embodiment_tag} not supported")
         assert (
@@ -354,6 +357,12 @@ class LeRobotSingleDataset(Dataset):
             # no shared default — calculate on the fly if missing.
             has_default_meta = False
         elif embodiment_tag == EmbodimentTag.AGILEX:
+            # stats.json is written inside the dataset dir; no shared default.
+            has_default_meta = False
+        elif embodiment_tag == EmbodimentTag.FRACTAL:
+            # stats.json is written inside the dataset dir; no shared default.
+            has_default_meta = False
+        elif embodiment_tag == EmbodimentTag.BRIDGE_ORIG:
             # stats.json is written inside the dataset dir; no shared default.
             has_default_meta = False
         else:
@@ -1101,6 +1110,12 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
             elif "agilex" in str(self.dataset_path).lower():
                 # AgiLex dual-arm 14-DoF (6+1 gripper per arm): reserved slot [176:190]
                 action_seq[:, 176:190] = delta_actions
+            elif "fractal" in str(self.dataset_path).lower():
+                # Google Fractal single-arm 7-DoF: reserved slot [190:197]
+                action_seq[:, 190:197] = delta_actions
+            elif "bridge_orig" in str(self.dataset_path).lower():
+                # Bridge V2 original single-arm 7-DoF: reserved slot [197:204]
+                action_seq[:, 197:204] = delta_actions
 
             text = ""
             if "annotation.human.coarse_action" in original_outputs:
