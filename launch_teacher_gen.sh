@@ -7,6 +7,11 @@ MASTER_PORT=${MASTER_PORT:-12341}
 NODE_RANK=${NODE_RANK:-0}
 SEED=${SEED:-42}
 
+CKPT_PATH=${CKPT_PATH:-outputs_0321_libero_ood/dreamdojo/exp1201/fold_towel_agilex_3view/checkpoints/iter_000008000/model}
+SAVE_ROOT=${SAVE_ROOT:-datasets/teacher_gen_output_fold_towel_agilex_3view}
+EMBODIMENT=${EMBODIMENT:-fold_towel_agilex_3view}
+EXPERIMENT=${EXPERIMENT:-dreamdojo_2b_480_640_${EMBODIMENT}}
+
 export TORCH_NCCL_ENABLE_MONITORING=0
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -25,7 +30,6 @@ export PYTHONPATH=$(pwd):$PYTHONPATH
 export OMP_NUM_THREADS=8
 export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
 export IMAGINAIRE_OUTPUT_ROOT=${IMAGINAIRE_OUTPUT_ROOT:-./logs}
-export WANDB_API_KEY=${WANDB_API_KEY:?Please set WANDB_API_KEY environment variable}
 
 source .venv/bin/activate
 
@@ -33,7 +37,8 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC \
   --master_port=$MASTER_PORT --master_addr $MASTER_ADDR \
   --node_rank=$NODE_RANK -m cosmos_predict2._src.predict2.action.inference.inference_gr00t_warmup \
   -- \
-  --experiment=groot_ac_reason_embeddings_rectified_flow_2b_480_640_gr1 \
-  --ckpt_path checkpoints/model/ \
-  --save_root datasets/teacher_gen_output \
+  --experiment=$EXPERIMENT \
+  --ckpt_path $CKPT_PATH \
+  --save_root $SAVE_ROOT \
+  --embodiment $EMBODIMENT \
   --guidance 0 --chunk_size 12 --start 0 --end 10000 --query_steps 0,9,18,27,34

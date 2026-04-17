@@ -7,6 +7,17 @@ MASTER_PORT=${MASTER_PORT:-12341}
 NODE_RANK=${NODE_RANK:-0}
 SEED=${SEED:-42}
 
+EXPERIMENT=${EXPERIMENT:-cosmos_predict2p5_2B_action_gr00t_fold_towel_agilex_3view_self_forcing_no_s3}
+
+# Trainer defaults for self-forcing experiments.
+# Hydra cannot merge experiment DictConfig into structured TrainerConfig attrs,
+# so these must be passed as explicit CLI overrides.
+TRAINER_MAX_ITER=${TRAINER_MAX_ITER:-3000}
+TRAINER_LOGGING_ITER=${TRAINER_LOGGING_ITER:-50}
+TRAINER_VALIDATION_ITER=${TRAINER_VALIDATION_ITER:-1000}
+TRAINER_RUN_VALIDATION=${TRAINER_RUN_VALIDATION:-true}
+TRAINER_MAX_VAL_ITER=${TRAINER_MAX_VAL_ITER:-50}
+
 export WANDB_HTTP_TIMEOUT=300
 export WANDB_RETRY_MAX=20
 export WANDB_STATS_SAMPLE_RATE_SECONDS=10
@@ -30,7 +41,7 @@ export PYTHONPATH=$(pwd):$PYTHONPATH
 export OMP_NUM_THREADS=8
 export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
 export IMAGINAIRE_OUTPUT_ROOT=${IMAGINAIRE_OUTPUT_ROOT:-./logs}
-export WANDB_API_KEY=${WANDB_API_KEY:?Please set WANDB_API_KEY environment variable}
+export WANDB_API_KEY=${WANDB_API_KEY:-""}
 
 source .venv/bin/activate
 
@@ -38,5 +49,10 @@ torchrun --nnodes=$NNODES --nproc_per_node=$NPROC \
   --master_port=$MASTER_PORT --master_addr $MASTER_ADDR \
   --node_rank=$NODE_RANK -m scripts.train \
   --config=cosmos_predict2/_src/predict2/interactive/configs/config_distill.py \
-  -- experiment=cosmos_predict2p5_2B_action_gr00t_gr1_self_forcing_no_s3 \
-  2>&1 | tee output_train.log
+  -- experiment=$EXPERIMENT \
+  trainer.max_iter=$TRAINER_MAX_ITER \
+  trainer.logging_iter=$TRAINER_LOGGING_ITER \
+  trainer.run_validation=$TRAINER_RUN_VALIDATION \
+  trainer.validation_iter=$TRAINER_VALIDATION_ITER \
+  trainer.max_val_iter=$TRAINER_MAX_VAL_ITER \
+  ${EXTRA_ARGS:-}

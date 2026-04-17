@@ -10,6 +10,9 @@ checkpoint:
   strict_resume: false
 
 trainer:
+  run_validation: true
+  validation_iter: 1000
+  max_val_iter: 50
   grad_accum_iter: 1
   callbacks:
     every_n_sample_reg:
@@ -18,6 +21,13 @@ trainer:
     every_n_sample_ema:
       every_n: 1000
       fps: 10   # LIBERO recorded video fps
+    validation_sample:
+      _target_: cosmos_predict2._src.predict2.callbacks.validation_draw_sample.ValidationDrawSample
+      n_samples: 1
+      guidance: [0]
+      fps: 10
+      is_ema: true
+      do_x0_prediction: false
 
 model_parallel:
   context_parallel_size: 1

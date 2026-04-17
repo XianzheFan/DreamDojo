@@ -1,7 +1,7 @@
 job:
   project: dreamdojo
-  group: exp0314
-  name: bridge_orig
+  group: exp1201
+  name: fold_towel_agilex_3view
 
 checkpoint:
   save_iter: 1000
@@ -14,10 +14,10 @@ trainer:
   callbacks:
     every_n_sample_reg:
       every_n: 1000
-      fps: 5   # Bridge V2 recorded video fps
+      fps: 5
     every_n_sample_ema:
       every_n: 1000
-      fps: 5   # Bridge V2 recorded video fps
+      fps: 5
     validation_sample:
       _target_: cosmos_predict2._src.predict2.callbacks.validation_draw_sample.ValidationDrawSample
       n_samples: 1
@@ -44,10 +44,11 @@ dataloader_train:
   dataset:
     num_frames: 13
     dataset_path:
-      - /root/workspace/fxz/Isaac-GR00T/examples/SimplerEnv/bridge_orig_dreamdojo
+      - datasets/fold_towel_0109_agilex
     data_split: train
     single_base_index: false
     deterministic_uniform_sampling: false
+    embodiment_override: agilex_3view
 
 dataloader_val:
   batch_size: 4
@@ -55,7 +56,8 @@ dataloader_val:
   dataset:
     num_frames: 13
     dataset_path:
-      - /root/workspace/fxz/Isaac-GR00T/examples/SimplerEnv/bridge_orig_dreamdojo
+      - datasets/fold_towel_0109_agilex
     data_split: val
     single_base_index: false
     deterministic_uniform_sampling: false
+    embodiment_override: agilex_3view

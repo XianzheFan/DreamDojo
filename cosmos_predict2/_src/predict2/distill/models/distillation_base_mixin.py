@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import collections
+import os
 import random
 from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -829,6 +830,64 @@ class DistillationCoreMixin:
             )
 
         return raw_state, latent_state, condition, uncondition
+
+    @torch.no_grad()
+    def validation_step(
+        self, data: dict[str, torch.Tensor], iteration: int
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """Override to handle 4-value return from distill get_data_and_condition.
+        Also saves GT vs Pred videos directly since ValidationDrawSample callback
+        may not be registered due to Hydra config merge limitations.
+        """
+        import cv2
+
+        raw_data, x0, condition, uncondition = self.get_data_and_condition(data)
+        data = misc.to(data, **self.tensor_kwargs)
+        sample = self.generate_samples_from_batch(
+            data,
+            guidance=0,
+            state_shape=x0.shape[1:],
+            n_sample=x0.shape[0],
+        )
+        sample = self.decode(sample)
+        gt = raw_data
+
+        # Save GT vs Pred video on rank 0
+        rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        if rank == 0:
+            save_dir = os.path.join(
+                os.environ.get("IMAGINAIRE_OUTPUT_ROOT", "./logs"),
+                "val_samples",
+            )
+            os.makedirs(save_dir, exist_ok=True)
+
+            # gt, sample: (B, C, T, H, W) in [-1, 1]
+            for b in range(min(gt.shape[0], 1)):
+                gt_vid = ((gt[b].float().cpu().clamp(-1, 1) + 1) / 2 * 255).to(torch.uint8)
+                pred_vid = ((sample[b].float().cpu().clamp(-1, 1) + 1) / 2 * 255).to(torch.uint8)
+                # (C, T, H, W) -> (T, H, W, C)
+                gt_np = gt_vid.permute(1, 2, 3, 0).numpy()
+                pred_np = pred_vid.permute(1, 2, 3, 0).numpy()
+                frames = []
+                for t in range(min(len(gt_np), len(pred_np))):
+                    g = cv2.putText(gt_np[t].copy(), "GT", (10, 30),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                    p = cv2.putText(pred_np[t].copy(), "Pred", (10, 30),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                    if g.shape[:2] != p.shape[:2]:
+                        g = cv2.resize(g, (p.shape[1], p.shape[0]))
+                    frames.append(np.concatenate([g, p], axis=1))
+                save_path = os.path.join(save_dir, f"val_iter{iteration:06d}_b{b}.mp4")
+                stacked = np.stack(frames)  # (T, H, W, C) uint8 RGB
+                h, w = stacked.shape[1], stacked.shape[2]
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(save_path, fourcc, 5, (w, h))
+                for frame in stacked:
+                    writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                writer.release()
+                log.info(f"Saved validation video: {save_path}")
+
+        return {"gt": gt, "result": sample}, torch.tensor(0.0).to(**self.tensor_kwargs)
 
     # ------------------ Checkpointing ------------------
     def model_dict(self) -> Dict[str, Any]:

@@ -25,10 +25,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export PYTHONPATH=$SCRIPT_DIR:$PYTHONPATH
 export OMP_NUM_THREADS=8
 export HF_HOME=/home/zhiqil/workspace/fxz/hf_cache
-export IMAGINAIRE_OUTPUT_ROOT=$SCRIPT_DIR/outputs_0321_libero_ood
-export WANDB_API_KEY=
-
-source /opt/venv/bin/activate
+export IMAGINAIRE_OUTPUT_ROOT=${IMAGINAIRE_OUTPUT_ROOT:-$SCRIPT_DIR/outputs}
+source $SCRIPT_DIR/.venv/bin/activate
 
 config_name=$1
 

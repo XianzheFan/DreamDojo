@@ -11,6 +11,7 @@ from .state_action import (
     StateActionToTensor,
     StateActionTransform,
 )
+from .tile import VideoTile
 from .video import (
     VideoColorJitter,
     VideoCrop,

@@ -17,6 +17,8 @@ import math
 import os
 from typing import List, Optional
 
+import cv2
+import mediapy
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -288,12 +290,8 @@ class ValidationDrawSample(Callback):
                 mse_loss = mse_loss.tolist()
                 info.update({f"x0_pred_mse_{tag}/Sigma{sigmas[i]:0.5f}": mse_loss[i] for i in range(len(mse_loss))})
 
-            assert sample_save_dir is not None
-            imgs = []
-            for idx, fp in enumerate(os.listdir(sample_save_dir)):
-                imgs.append(wandb.Image(os.path.join(sample_save_dir, fp), caption=f"{sample_counter}"))
-
-            info[f"{self.name}/{tag}_sample"] = imgs
+            if sample_save_dir is not None:
+                info[f"{self.name}/{tag}_sample"] = wandb.Video(sample_save_dir, fps=self.fps, caption=f"{sample_counter}")
             wandb.log(
                 info,
                 step=iteration,
@@ -359,8 +357,6 @@ class ValidationDrawSample(Callback):
 
     def run_save(self, to_show, batch_size, iteration, save_name) -> Optional[str]:
         to_show = (1.0 + torch.stack(to_show, dim=0).clamp(-1, 1)) / 2.0  # [n, b, c, t, h, w]
-        is_single_frame = to_show.shape[3] == 1
-        n_viz_sample = min(self.n_viz_sample, batch_size)
 
         save_path = os.path.join(str(iteration), str(self.sample_counter), save_name)
 
@@ -374,34 +370,19 @@ class ValidationDrawSample(Callback):
 
         local_save_dir = os.path.join(self.local_dir, save_path)
         os.makedirs(local_save_dir, exist_ok=True)
-        local_path = os.path.join(local_save_dir, f"{self.rank}.jpg")
+        local_path = os.path.join(local_save_dir, f"{self.rank}.mp4")
 
-        if self.wandb_online:
-            if is_single_frame:  # image case
-                to_show = rearrange(
-                    to_show[:, :n_viz_sample],
-                    "n b c t h w -> t c (n h) (b w)",
-                )
-                image_grid = torchvision.utils.make_grid(to_show, nrow=1, padding=0, normalize=False)
-                # resize so that wandb can handle it
-                torchvision.utils.save_image(resize_image(image_grid, 1024), local_path, nrow=1, scale_each=True)
-            else:
-                to_show = to_show[:, :n_viz_sample]  # [n, b, c, 3, h, w]
+        if self.rank == 0:
+            # Save mp4 with GT and Pred side by side
+            to_show = to_show[:, 0] * 255  # [n, c, t, h, w]
+            pred_video = to_show[0].to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+            gt_video = to_show[-1].to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+            captioned = []
+            for gt_f, pred_f in zip(gt_video, pred_video):
+                gt_f = cv2.putText(gt_f.copy(), "GT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                pred_f = cv2.putText(pred_f.copy(), "Pred", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+                captioned.append(np.concatenate([gt_f, pred_f], axis=1))
+            video = np.stack(captioned, axis=0)
+            mediapy.write_video(local_path, video, fps=self.fps)
 
-                # resize 3 frames frames so that we can display them on wandb
-                _T = to_show.shape[3]
-                three_frames_list = [0, _T // 2, _T - 1]
-                to_show = to_show[:, :, :, three_frames_list]
-                log_image_size = 1024
-                to_show = rearrange(
-                    to_show,
-                    "n b c t h w -> 1 c (n h) (b t w)",
-                )
-
-                # resize so that wandb can handle it
-                image_grid = torchvision.utils.make_grid(to_show, nrow=1, padding=0, normalize=False)
-                torchvision.utils.save_image(
-                    resize_image(image_grid, log_image_size), local_path, nrow=1, scale_each=True
-                )
-
-        return local_save_dir
+        return local_path

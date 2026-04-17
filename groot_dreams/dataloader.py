@@ -12,7 +12,31 @@ from groot_dreams.data.dataset_video import VideoDataset
 
 def is_lerobot_dataset(dataset_path: str) -> bool:
     p = dataset_path.lower()
-    return "gr1" in p or "g1" in p or "yam" in p or "agibot" in p or "libero" in p or "agilex" in p or "fractal" in p or "bridge_orig" in p
+    return "gr1" in p or "g1" in p or "yam" in p or "agibot" in p or "libero" in p or "new_agilex" in p or "agilex" in p or "fractal" in p or "bridge_orig" in p
+
+
+def _infer_embodiment(path: str) -> str:
+    p = path.lower()
+    if "gr1" in p:
+        return "gr1"
+    elif "agibot" in p:
+        return "agibot"
+    elif "g1" in p:
+        return "g1"
+    elif "yam" in p:
+        return "yam"
+    elif "libero" in p:
+        return "libero"
+    elif "new_agilex" in p:
+        return "new_agilex"
+    elif "agilex" in p:
+        return "agilex"
+    elif "bridge_orig" in p:
+        return "bridge_orig"
+    elif "fractal" in p:
+        return "fractal"
+    else:
+        raise ValueError(f"Cannot infer embodiment from dataset path: {path}")
 
 
 class VideoActionDataset(torch.utils.data.Dataset):
@@ -100,6 +124,7 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
         restrict_len=None,
 
         cr1_embeddings_path=None,
+        embodiment_override=None,
     ):
         if args is not None:
             dataset_path = args.dataset_path
@@ -145,24 +170,7 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
                 ))
                 print(f"Created VideoDataset for {path}")
             else:
-                if "gr1" in path.lower():
-                    embodiment = "gr1"
-                elif "agibot" in path.lower():
-                    embodiment = "agibot"
-                elif "g1" in path.lower():
-                    embodiment = "g1"
-                elif "yam" in path.lower():
-                    embodiment = "yam"
-                elif "libero" in path.lower():
-                    embodiment = "libero"
-                elif "agilex" in path.lower():
-                    embodiment = "agilex"
-                elif "bridge_orig" in path.lower():
-                    embodiment = "bridge_orig"
-                elif "fractal" in path.lower():
-                    embodiment = "fractal"
-                else:
-                    raise ValueError(f"Cannot infer embodiment from dataset path: {path}")
+                embodiment = embodiment_override if embodiment_override else _infer_embodiment(path)
                 self.datasets.append(VideoActionDataset(
                     dataset_path=path,
                     data_split=data_split,

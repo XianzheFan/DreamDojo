@@ -64,6 +64,11 @@ dataset_gr00t_old_gr1_cosmos_warmup = L(ActionDatasetSFWarmup)(
     cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
 )
 
+dataset_gr00t_fold_towel_agilex_3view_warmup = L(ActionDatasetSFWarmup)(
+    data_path="datasets/teacher_gen_output_fold_towel_agilex_3view",
+    cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
+)
+
 # ----------- Standard GR00T Datasets -----------
 
 from groot_dreams.dataloader import MultiVideoActionDataset, get_data_path
@@ -146,6 +151,24 @@ gr00t_customized_yam_dataset_long = L(MultiVideoActionDataset)(
     dataset_mixing_weights=yam_mixing_weights,
     data_split="train",
     cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt"
+)
+
+fold_towel_agilex_3view_path, fold_towel_agilex_3view_mixing_weights = get_data_path("fold_towel_agilex_3view")
+gr00t_customized_fold_towel_agilex_3view_dataset = L(MultiVideoActionDataset)(
+    num_frames=13,
+    dataset_path=fold_towel_agilex_3view_path,
+    dataset_mixing_weights=fold_towel_agilex_3view_mixing_weights,
+    data_split="train",
+    cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
+    embodiment_override="agilex_3view",
+)
+gr00t_customized_fold_towel_agilex_3view_dataset_long = L(MultiVideoActionDataset)(
+    num_frames=49,
+    dataset_path=fold_towel_agilex_3view_path,
+    dataset_mixing_weights=fold_towel_agilex_3view_mixing_weights,
+    data_split="train",
+    cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
+    embodiment_override="agilex_3view",
 )
 
 pretrain_path, pretrain_mixing_weights = get_data_path("pretrain")
@@ -245,6 +268,12 @@ def register_interactive_data():
         cs.store(
             group=f"data_{split}",
             package=f"dataloader_{split}",
+            name="gr00t_fold_towel_agilex_3view_warmup",
+            node=L(make_dataloader)(dataset=dataset_gr00t_fold_towel_agilex_3view_warmup),
+        )
+        cs.store(
+            group=f"data_{split}",
+            package=f"dataloader_{split}",
             name="gr00t_customized_gr1",
             node=L(make_dataloader)(dataset=gr00t_customized_gr1_dataset, num_workers=0, pin_memory=False),
         )
@@ -301,6 +330,18 @@ def register_interactive_data():
             package=f"dataloader_{split}",
             name="gr00t_customized_yam_long",
             node=L(make_dataloader)(dataset=gr00t_customized_yam_dataset_long, num_workers=0, pin_memory=False),
+        )
+        cs.store(
+            group=f"data_{split}",
+            package=f"dataloader_{split}",
+            name="gr00t_customized_fold_towel_agilex_3view",
+            node=L(make_dataloader)(dataset=gr00t_customized_fold_towel_agilex_3view_dataset, num_workers=0, pin_memory=False),
+        )
+        cs.store(
+            group=f"data_{split}",
+            package=f"dataloader_{split}",
+            name="gr00t_customized_fold_towel_agilex_3view_long",
+            node=L(make_dataloader)(dataset=gr00t_customized_fold_towel_agilex_3view_dataset_long, num_workers=0, pin_memory=False),
         )
         cs.store(
             group=f"data_{split}",

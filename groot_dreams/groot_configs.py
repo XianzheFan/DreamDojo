@@ -1,5 +1,5 @@
 from groot_dreams.data.dataset import ModalityConfig
-from groot_dreams.data.transform import VideoToTensor, VideoCrop, VideoResize
+from groot_dreams.data.transform import VideoToTensor, VideoCrop, VideoResize, VideoTile
 from groot_dreams.data.transform.base import ComposedModalityTransform
 from groot_dreams.data.transform.concat import ConcatTransform
 from groot_dreams.data.transform.state_action import StateActionToTensor, StateActionTransform
@@ -128,7 +128,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
                 modality_keys=["action.arm"],
             ),
         }
-    elif embodiment == "agilex":
+    elif embodiment in ("agilex", "new_agilex"):
         # AgiLex dual-arm robot: 6 joints + 1 gripper per arm = 14-DoF total.
         # Recorded at 30 fps; timestep_interval=4 → every 4th frame sampled.
         # Action slot in DreamDojo's 384-dim vector: [176:190].
@@ -139,6 +139,38 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
             "video": ModalityConfig(
                 delta_indices=delta_indices,
                 modality_keys=[video_key],
+            ),
+            "state": ModalityConfig(
+                delta_indices=[0],
+                modality_keys=[
+                    "state.left_arm_joint_position",
+                    "state.left_gripper",
+                    "state.right_arm_joint_position",
+                    "state.right_gripper",
+                ],
+            ),
+            "action": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=[
+                    "action.left_arm_joint_position",
+                    "action.left_gripper",
+                    "action.right_arm_joint_position",
+                    "action.right_gripper",
+                ],
+            ),
+        }
+    elif embodiment in ("agilex_3view", "new_agilex_3view"):
+        # AgiLex 3-view tiling: same as agilex but uses all 3 cameras
+        # (cam_high, cam_left_wrist, cam_right_wrist) tiled into a 2x2 grid.
+        # Each view resized to 240x320 (1/4 area), combined into 480x640.
+        timestep_interval = 4
+        delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
+        video_keys = ["video.cam_high", "video.cam_left_wrist", "video.cam_right_wrist"]
+        tiled_video_key = "video.cam_tiled"
+        config = {
+            "video": ModalityConfig(
+                delta_indices=delta_indices,
+                modality_keys=video_keys,
             ),
             "state": ModalityConfig(
                 delta_indices=[0],
@@ -263,13 +295,30 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
     video_modality, state_modality, action_modality = config["video"], config["state"], config["action"]
     height = 480
     width = 640
-    
-    train_transform = ComposedModalityTransform(
-        transforms=[
-            VideoToTensor(apply_to=video_modality.modality_keys),
-            VideoCrop(apply_to=video_modality.modality_keys),
-            VideoResize(apply_to=video_modality.modality_keys, height=height, width=width, interpolation="linear"),
 
+    # For agilex_3view: resize each view to half-size and tile into a 2x2 grid.
+    if embodiment in ("agilex_3view", "new_agilex_3view"):
+        video_concat_order = [tiled_video_key]
+
+        def _make_video_transforms():
+            return [
+                VideoToTensor(apply_to=video_modality.modality_keys),
+                VideoCrop(apply_to=video_modality.modality_keys),
+                VideoResize(apply_to=video_modality.modality_keys, height=height // 2, width=width // 2, interpolation="linear"),
+                VideoTile(apply_to=video_modality.modality_keys, output_key=tiled_video_key),
+            ]
+    else:
+        video_concat_order = video_modality.modality_keys
+
+        def _make_video_transforms():
+            return [
+                VideoToTensor(apply_to=video_modality.modality_keys),
+                VideoCrop(apply_to=video_modality.modality_keys),
+                VideoResize(apply_to=video_modality.modality_keys, height=height, width=width, interpolation="linear"),
+            ]
+
+    def _make_all_transforms():
+        return _make_video_transforms() + [
             StateActionToTensor(apply_to=state_modality.modality_keys),
             StateActionTransform(apply_to=state_modality.modality_keys, normalization_modes={
                 key: "min_max" for key in state_modality.modality_keys
@@ -281,34 +330,13 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
             }),
 
             ConcatTransform(
-                video_concat_order=video_modality.modality_keys,
+                video_concat_order=video_concat_order,
                 state_concat_order=state_modality.modality_keys,
                 action_concat_order=action_modality.modality_keys,
             ),
         ]
-    )
-    test_transform = ComposedModalityTransform(
-        transforms=[
-            VideoToTensor(apply_to=video_modality.modality_keys),
-            VideoCrop(apply_to=video_modality.modality_keys),
-            VideoResize(apply_to=video_modality.modality_keys, height=height, width=width, interpolation="linear"),
 
-            StateActionToTensor(apply_to=state_modality.modality_keys),
-            StateActionTransform(apply_to=state_modality.modality_keys, normalization_modes={
-                key: "min_max" for key in state_modality.modality_keys
-            }),
-
-            StateActionToTensor(apply_to=action_modality.modality_keys),
-            StateActionTransform(apply_to=action_modality.modality_keys, normalization_modes={
-                key: "min_max" for key in action_modality.modality_keys
-            }),
-
-            ConcatTransform(
-                video_concat_order=video_modality.modality_keys,
-                state_concat_order=state_modality.modality_keys,
-                action_concat_order=action_modality.modality_keys,
-            ),
-        ]
-    )
+    train_transform = ComposedModalityTransform(transforms=_make_all_transforms())
+    test_transform = ComposedModalityTransform(transforms=_make_all_transforms())
 
     return config, train_transform, test_transform

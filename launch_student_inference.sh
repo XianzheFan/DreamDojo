@@ -29,9 +29,13 @@ export WANDB_API_KEY=${WANDB_API_KEY:?Please set WANDB_API_KEY environment varia
 
 source .venv/bin/activate
 
+EXPERIMENT=${EXPERIMENT:-cosmos_predict2p5_2B_action_gr00t_fold_towel_agilex_3view_self_forcing_no_s3}
+CKPT_PATH=${CKPT_PATH:-checkpoints/iter_000003000}
+INPUT_JSON=${INPUT_JSON:-datasets/eval/info.json}
+
 torchrun --nproc_per_node=$NPROC -m cosmos_predict2._src.predict2.interactive.inference.action_video2world \
   --config=cosmos_predict2/_src/predict2/interactive/configs/config_distill.py \
-  --experiment=cosmos_predict2p5_2B_action_gr00t_gr1_self_forcing_no_s3 \
-  --ckpt_path checkpoints/iter_000003000 \
-  --input_json datasets/eval/info.json \
-  --torch_compile
+  --experiment=$EXPERIMENT \
+  --ckpt_path $CKPT_PATH \
+  --input_json $INPUT_JSON \
+  "$@"

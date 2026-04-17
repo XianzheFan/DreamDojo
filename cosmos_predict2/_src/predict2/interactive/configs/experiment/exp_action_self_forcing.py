@@ -17,7 +17,9 @@ import math
 
 from hydra.core.config_store import ConfigStore
 
+from cosmos_predict2._src.imaginaire.lazy_config import LazyCall as L
 from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
+from cosmos_predict2._src.predict2.callbacks.validation_draw_sample import ValidationDrawSample
 from cosmos_predict2._src.predict2.models.video2world_model import HighSigmaStrategy
 from cosmos_predict2._src.predict2.text_encoders.text_encoder import EmbeddingConcatStrategy
 from cosmos_predict2._src.predict2.distill.utils.config_helper import build_no_s3_run, deep_update_config_dict
@@ -367,6 +369,42 @@ ACTION_GR00T_PRETRAIN_SELF_FORCING = make_experiment(
     ),
 )
 
+ACTION_GR00T_FOLD_TOWEL_AGILEX_3VIEW_SELF_FORCING = make_experiment(
+    name="fold_towel_agilex_3view",
+    data="gr00t_customized_fold_towel_agilex_3view_long",
+    overrides=dict(
+        job=dict(
+            project="cosmos_predict2_action_conditioned",
+            group="interactive_self_forcing",
+        ),
+        checkpoint=dict(
+            load_path="logs/cosmos_interactive/debug/fold_towel_agilex_3view_no_s3_2026-04-11_02-06-25/checkpoints/iter_000020000",
+        ),
+        model=dict(
+            config=dict(
+                teacher_load_from=dict(
+                    load_path="outputs_0321_libero_ood/dreamdojo/exp1201/fold_towel_agilex_3view/checkpoints/iter_000008000/model",
+                    credentials="credentials/s3_checkpoint.secret",
+                ),
+            ),
+        ),
+        trainer=dict(
+            run_validation=True,
+            validation_iter=1000,
+            max_val_iter=50,
+            callbacks=dict(
+                validation_sample=L(ValidationDrawSample)(
+                    n_samples=1,
+                    guidance=[0],
+                    fps=5,
+                    is_ema=True,
+                    do_x0_prediction=False,
+                ),
+            ),
+        ),
+    ),
+)
+
 cs = ConfigStore.instance()
 
 cs.store(
@@ -404,4 +442,10 @@ cs.store(
     package="_global_",
     name="cosmos_predict2p5_2B_action_gr00t_pretrain_self_forcing_no_s3",
     node=build_no_s3_run(ACTION_GR00T_PRETRAIN_SELF_FORCING),
+)
+cs.store(
+    group="experiment",
+    package="_global_",
+    name="cosmos_predict2p5_2B_action_gr00t_fold_towel_agilex_3view_self_forcing_no_s3",
+    node=build_no_s3_run(ACTION_GR00T_FOLD_TOWEL_AGILEX_3VIEW_SELF_FORCING),
 )

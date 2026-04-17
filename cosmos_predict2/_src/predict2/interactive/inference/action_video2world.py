@@ -736,6 +736,26 @@ def _process_entries(
             save_img_or_video((1.0 + video[0]) / 2, save_fp_wo_ext, fps=args.fps)
             logger.info(f"Saved video to {output_video_path}")
 
+            # Save GT vs Pred side-by-side comparison
+            try:
+                import cv2
+                gt_video_array = mediapy.read_video(input_video)  # (T, H, W, C) uint8
+                pred_video = ((1.0 + video[0]) / 2).clamp(0, 1).cpu()  # (C, T, H, W)
+                pred_video = (pred_video.permute(1, 2, 3, 0).numpy() * 255).astype(np.uint8)  # (T, H, W, C)
+                min_t = min(len(gt_video_array), len(pred_video))
+                h, w = pred_video.shape[1], pred_video.shape[2]
+                cmp_path = save_fp_wo_ext + "_compare.mp4"
+                writer = cv2.VideoWriter(cmp_path, cv2.VideoWriter_fourcc(*"mp4v"), args.fps, (w * 2, h))
+                for t in range(min_t):
+                    gt_f = cv2.resize(gt_video_array[t], (w, h)) if gt_video_array[t].shape[:2] != (h, w) else gt_video_array[t]
+                    gt_f = cv2.putText(gt_f.copy(), "GT", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                    pred_f = cv2.putText(pred_video[t].copy(), "Pred", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                    writer.write(cv2.cvtColor(np.concatenate([gt_f, pred_f], axis=1), cv2.COLOR_RGB2BGR))
+                writer.release()
+                logger.info(f"Saved comparison to {cmp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save comparison: {e}")
+
 
 def main() -> None:
     args = parse_arguments()

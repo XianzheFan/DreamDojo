@@ -95,6 +95,12 @@ def parse_arguments() -> argparse.Namespace:
         default=1,
         help="Context parallel size (number of GPUs to split context over). Set to 8 for 8 GPUs",
     )
+    parser.add_argument(
+        "--embodiment",
+        type=str,
+        default=None,
+        help="Embodiment name to override experiment-based dataset selection (e.g. fold_towel_agilex_3view)",
+    )
     return parser.parse_args()
 
 
@@ -165,7 +171,17 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(0)
 
-    if "gr1" in args.experiment:
+    embodiment_override = None
+    if args.embodiment is not None:
+        import yaml
+        from pathlib import Path
+        yaml_path = Path("configs") / f"2b_480_640_{args.embodiment}.yaml"
+        with open(yaml_path, "r") as f:
+            config = yaml.safe_load(f)
+        dataset_path = config["dataloader_train"]["dataset"]["dataset_path"]
+        dataset_mixing_weights = config["dataloader_train"]["dataset"].get("dataset_mixing_weights", None)
+        embodiment_override = config["dataloader_train"]["dataset"].get("embodiment_override", None)
+    elif "gr1" in args.experiment:
         dataset_path, dataset_mixing_weights = get_data_path("gr1")
     elif "g1" in args.experiment:
         dataset_path, dataset_mixing_weights = get_data_path("g1")
@@ -182,6 +198,7 @@ def main():
 
     logger.info(f"Using dataset path: {dataset_path}")
     logger.info(f"Using dataset mixing weights: {dataset_mixing_weights}")
+    logger.info(f"Using embodiment override: {embodiment_override}")
     dataset = MultiVideoActionDataset(
         num_frames=13,
         dataset_path=dataset_path,
@@ -189,6 +206,7 @@ def main():
         data_split="full",
         single_base_index=False,
         restrict_len=None,
+        embodiment_override=embodiment_override,
     )
 
     # Initialize the inference handler with context parallel support

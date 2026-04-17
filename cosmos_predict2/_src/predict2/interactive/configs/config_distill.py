@@ -85,11 +85,11 @@ def make_config() -> Config:
 
     c.trainer.type = Trainer
     c.trainer.straggler_detection.enabled = False
-    c.trainer.max_iter = 400_000
-    c.trainer.logging_iter = 10
-    c.trainer.validation_iter = 100
-    c.trainer.run_validation = False
     c.trainer.callbacks = None
+    # NOTE: Do not set trainer.max_iter, logging_iter, validation_iter, or
+    # run_validation here — they must come from the experiment config.
+    # Setting them on the structured config prevents Hydra experiment
+    # overrides from taking effect (OmegaConf merge limitation).
 
     # Call this function to register config groups for advanced overriding. the order follows the default config groups
     register_interactive_data()

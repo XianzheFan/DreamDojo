@@ -266,7 +266,7 @@ class LeRobotSingleDataset(Dataset):
             elif embodiment_tag == EmbodimentTag.LIBERO:
                 modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
                 print("NOTE: LIBERO dataset; expecting modality.json inside dataset directory")
-            elif embodiment_tag == EmbodimentTag.AGILEX:
+            elif embodiment_tag in (EmbodimentTag.AGILEX, EmbodimentTag.AGILEX_3VIEW, EmbodimentTag.NEW_AGILEX, EmbodimentTag.NEW_AGILEX_3VIEW):
                 modality_meta_path = self.dataset_path / LE_ROBOT_MODALITY_FILENAME
                 print("NOTE: AGILEX dataset; expecting modality.json inside dataset directory")
             elif embodiment_tag == EmbodimentTag.FRACTAL:
@@ -356,7 +356,7 @@ class LeRobotSingleDataset(Dataset):
             # stats.json is written by the collection script inside the dataset dir;
             # no shared default — calculate on the fly if missing.
             has_default_meta = False
-        elif embodiment_tag == EmbodimentTag.AGILEX:
+        elif embodiment_tag in (EmbodimentTag.AGILEX, EmbodimentTag.AGILEX_3VIEW, EmbodimentTag.NEW_AGILEX, EmbodimentTag.NEW_AGILEX_3VIEW):
             # stats.json is written inside the dataset dir; no shared default.
             has_default_meta = False
         elif embodiment_tag == EmbodimentTag.FRACTAL:
@@ -515,6 +515,10 @@ class LeRobotSingleDataset(Dataset):
             elif self.tag == "agilex":
                 raise FileNotFoundError(
                     f"AGILEX dataset at {self.dataset_path} must contain meta/modality.json"
+                )
+            elif self.tag == "new_agilex":
+                raise FileNotFoundError(
+                    f"NEW_AGILEX dataset at {self.dataset_path} must contain meta/modality.json"
                 )
             else:
                 raise ValueError(f"Embodiment tag {self.tag} not supported")
@@ -1042,7 +1046,7 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
             pass
         elif data_split == "train":
             self._all_steps = self._all_steps[:-len(self) // 20]
-        elif data_split == "test":
+        elif data_split in ("val", "test"):
             self._all_steps = self._all_steps[-len(self) // 20:]
 
     def _get_trajectories(self) -> tuple[np.ndarray, np.ndarray]:
@@ -1107,6 +1111,9 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
             elif "libero" in str(self.dataset_path).lower():
                 # LIBERO single-arm 7-DoF: reserved slot [169:176]
                 action_seq[:, 169:176] = delta_actions
+            elif "new_agilex" in str(self.dataset_path).lower():
+                # New AgiLex dual-arm 14-DoF (6+1 gripper per arm): same slot as agilex [176:190]
+                action_seq[:, 176:190] = delta_actions
             elif "agilex" in str(self.dataset_path).lower():
                 # AgiLex dual-arm 14-DoF (6+1 gripper per arm): reserved slot [176:190]
                 action_seq[:, 176:190] = delta_actions
