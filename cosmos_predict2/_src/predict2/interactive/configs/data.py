@@ -69,6 +69,11 @@ dataset_gr00t_fold_towel_agilex_3view_warmup = L(ActionDatasetSFWarmup)(
     cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
 )
 
+dataset_gr00t_pnp_agilex_3view_warmup = L(ActionDatasetSFWarmup)(
+    data_path="datasets/teacher_gen_output_pnp_agilex_3view",
+    cr1_embeddings_path="datasets/cr1_empty_string_text_embeddings.pt",
+)
+
 # ----------- Standard GR00T Datasets -----------
 
 from groot_dreams.dataloader import MultiVideoActionDataset, get_data_path
@@ -270,6 +275,12 @@ def register_interactive_data():
             package=f"dataloader_{split}",
             name="gr00t_fold_towel_agilex_3view_warmup",
             node=L(make_dataloader)(dataset=dataset_gr00t_fold_towel_agilex_3view_warmup),
+        )
+        cs.store(
+            group=f"data_{split}",
+            package=f"dataloader_{split}",
+            name="gr00t_pnp_agilex_3view_warmup",
+            node=L(make_dataloader)(dataset=dataset_gr00t_pnp_agilex_3view_warmup),
         )
         cs.store(
             group=f"data_{split}",

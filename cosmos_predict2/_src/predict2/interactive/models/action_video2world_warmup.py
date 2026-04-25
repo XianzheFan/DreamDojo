@@ -104,6 +104,12 @@ class ActionConditionedSFWarmupModelRF(Text2WorldModelRectifiedFlow):
 
         return timesteps, noisy_input, target_latents
 
+    @torch.no_grad()
+    def validation_step(
+        self, data_batch: dict[str, torch.Tensor], iteration: int
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        return self.training_step(data_batch, iteration)
+
     def training_step(
         self, data_batch: dict[str, torch.Tensor], iteration: int
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:

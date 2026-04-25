@@ -47,46 +47,6 @@ from cosmos_oss.init import init_environment
 from cosmos_predict2._src.predict2.inference.video2world import Video2WorldInference
 from cosmos_predict2.config import DEFAULT_NEGATIVE_PROMPT
 
-from train_dinov2_value_expert import DINOv2ValueExpert
-
-class ServerValueExpert:
-    def __init__(self, checkpoint_path: str, device: str = "cuda"):
-        self.device = torch.device(device)
-        self.num_clip_frames = 4
-        self.model = DINOv2ValueExpert(
-            num_clip_frames=self.num_clip_frames,
-            dinov2_model="dinov2_vitb14",
-            attn_heads=8, attn_layers=2, hidden_dim=512, freeze_backbone=True
-        )
-        self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device, weights_only=True))
-        self.model.to(self.device).eval()
-
-    @torch.no_grad()
-    def score_video_tensor(self, video_tensor: torch.Tensor) -> float:
-        vid_01 = torch.clamp((video_tensor + 1.0) / 2.0, 0.0, 1.0)
-        vid_expert = vid_01.permute(0, 2, 1, 3, 4).contiguous()
-
-        T = vid_expert.shape[1]
-        if T < self.num_clip_frames:
-            pad_len = self.num_clip_frames - T
-            pad = vid_expert[:, -1:].expand(-1, pad_len, -1, -1, -1)
-            vid_expert = torch.cat([vid_expert, pad], dim=1)
-
-        values = self.model.score_video(vid_expert, window_size=self.num_clip_frames, stride=1)
-        per_window_values = values.squeeze(0).cpu().numpy()
-
-        if len(per_window_values) == 0: return float("inf")
-        min_idx, min_val = 0, per_window_values[0]
-        for i in range(1, len(per_window_values)):
-            if per_window_values[i] < min_val:
-                min_val = per_window_values[i]
-                min_idx = i
-            elif per_window_values[i] > min_val + 0.05:
-                break
-        return float(np.mean(per_window_values[: min_idx + 1]))
-
-_server_value_expert = None
-
 
 class GenerateRequest(BaseModel):
     frame: str          # base64-encoded raw bytes of a uint8 HWC RGB image
@@ -102,7 +62,6 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     save_path: str
-    score: float | None = None
 
 
 app = FastAPI(title="DreamDojo API")
@@ -326,17 +285,11 @@ def generate(req: GenerateRequest):
     ).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = Path(req.save_name).name
-    save_path = Path("output") / timestamp / f"{safe_name}.mp4"
+    save_path = _save_dir / timestamp / f"{req.save_name}.mp4"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     mediapy.write_video(str(save_path), video_np, fps=_fps)
 
-    final_score = None
-    if _server_value_expert is not None:
-        final_score = _server_value_expert.score_video_tensor(video)
-        print(f"[ValueExpert] In-memory score computed: {final_score:.4f}", flush=True)
-
-    return GenerateResponse(save_path=str(save_path), score=final_score)
+    return GenerateResponse(save_path=str(save_path))
 
 
 def parse_args():
@@ -359,8 +312,6 @@ def parse_args():
                         help="num_action_per_chunk expected by the model (default: 12)")
     parser.add_argument("--fps", type=int, default=10,
                         help="FPS for saved mp4 videos (should match training data fps, e.g. 3=Fractal, 5=Bridge, 10=LIBERO)")
-    parser.add_argument("--value-expert-ckpt", type=str, default=None,
-                        help="Path to DINOv2 Value Expert model for in-memory scoring")
     parser.add_argument("--stats-json", type=str, default=None,
                         help="Path to dataset stats.json for action min-max normalization. "
                              "If provided, raw actions are normalized to [-1,1] before inference.")
@@ -392,11 +343,6 @@ if __name__ == "__main__":
         print("[DreamDojo] WARNING: No --stats-json provided, actions will NOT be normalized.")
 
     init_environment()
-
-    if args.value_expert_ckpt:
-        print(f"[DreamDojo] Loading Server Value Expert from {args.value_expert_ckpt}...")
-        _server_value_expert = ServerValueExpert(checkpoint_path=args.value_expert_ckpt)
-        print("[DreamDojo] Server Value Expert loaded.")
 
     _model = Video2WorldInference(
         experiment_name=args.experiment,

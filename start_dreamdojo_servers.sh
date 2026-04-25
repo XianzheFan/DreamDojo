@@ -7,6 +7,8 @@ unset RANK WORLD_SIZE LOCAL_RANK
 
 DD_DIR=${DD_DIR:-"$HOME/workspace/fxz/DreamDojo"}
 export HF_HOME=/home/zhiqil/workspace/fxz/hf_cache
+# DD_DIR=${DD_DIR:-"$HOME/DreamDojo"}
+# export HF_HOME=./hf_cache
 
 CKPT=${CKPT:-"<path_to_model_ema_bf16.pt>"}
 EXP=${EXP:-"dreamdojo_2b_480_640_libero"}

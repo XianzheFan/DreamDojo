@@ -174,7 +174,7 @@ class Text2WorldModelRectifiedFlow(ImaginaireModel):
         # 6. text encoder
         self.text_encoder = None
         if self.config.text_encoder_config is not None and self.config.text_encoder_config.compute_online:
-            self.text_encoder = TextEncoder(self.config.text_encoder_config)
+            self.text_encoder = TextEncoder(self.config.text_encoder_config, device="cpu")
 
         self.lam = LAM(
             image_channels=3,

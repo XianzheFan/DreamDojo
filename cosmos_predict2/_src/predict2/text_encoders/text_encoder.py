@@ -49,6 +49,7 @@ class TextEncoderConfig:
         model_config=L(QwenModelConfig)(
             tokenizer_type="Qwen/Qwen2.5-VL-7B-Instruct",
             name_or_path="Qwen/Qwen2.5-VL-7B-Instruct",
+            attn_implementation="sdpa",
             hidden_size=3584,
             intermediate_size=18944,
             max_window_layers=28,
@@ -180,7 +181,7 @@ class TextEncoder:
             input_ids = torch.LongTensor(input_ids).to(device="cuda")
             input_ids_batch.append(input_ids)
 
-        input_ids_batch = torch.stack(input_ids_batch, dim=0)
+        input_ids_batch = torch.stack(input_ids_batch, dim=0).to(self.device)
 
         # Compute text embeddings
         self.model = self.model.to(self.device)

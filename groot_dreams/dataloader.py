@@ -11,6 +11,8 @@ from groot_dreams.data.dataset_video import VideoDataset
 
 
 def is_lerobot_dataset(dataset_path: str) -> bool:
+    if (Path(dataset_path) / "meta" / "info.json").exists():
+        return True
     p = dataset_path.lower()
     return "gr1" in p or "g1" in p or "yam" in p or "agibot" in p or "libero" in p or "new_agilex" in p or "agilex" in p or "fractal" in p or "bridge_orig" in p
 
