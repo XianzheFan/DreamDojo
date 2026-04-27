@@ -1,6 +1,6 @@
 job:
   project: dreamdojo
-  group: exp1201
+  group: exp0426
   name: fold_towel_agilex
 
 checkpoint:

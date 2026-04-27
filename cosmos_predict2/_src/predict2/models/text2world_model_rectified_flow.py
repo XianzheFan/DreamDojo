@@ -174,7 +174,12 @@ class Text2WorldModelRectifiedFlow(ImaginaireModel):
         # 6. text encoder
         self.text_encoder = None
         if self.config.text_encoder_config is not None and self.config.text_encoder_config.compute_online:
-            self.text_encoder = TextEncoder(self.config.text_encoder_config, device="cpu")
+            # device="cuda": when distributed is initialized, parallelize_qwen
+            # FSDP2-wraps the text encoder on the CUDA device mesh. Holding the
+            # local tensors on CPU is inconsistent with that mesh and produces
+            # cpu/cuda device mismatches at forward (e.g. DTensor.full_tensor()
+            # all-gathers on CUDA while CPU-derived position_ids stay on CPU).
+            self.text_encoder = TextEncoder(self.config.text_encoder_config, device="cuda")
 
         self.lam = LAM(
             image_channels=3,

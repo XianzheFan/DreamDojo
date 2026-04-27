@@ -1,7 +1,7 @@
 job:
   project: dreamdojo
   group: exp0426
-  name: spray_cap_3view
+  name: screw_3view
 
 checkpoint:
   save_iter: 1000
@@ -44,7 +44,7 @@ dataloader_train:
   dataset:
     num_frames: 13
     dataset_path:
-      - datasets/spray_cap_truncated
+      - datasets/screw_0426
     data_split: train
     single_base_index: false
     deterministic_uniform_sampling: false
@@ -57,7 +57,7 @@ dataloader_val:
   dataset:
     num_frames: 13
     dataset_path:
-      - datasets/spray_cap_truncated
+      - datasets/screw_0426
     data_split: val
     single_base_index: false
     deterministic_uniform_sampling: false

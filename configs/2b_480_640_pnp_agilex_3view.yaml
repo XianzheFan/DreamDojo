@@ -1,6 +1,6 @@
 job:
   project: dreamdojo
-  group: exp0416
+  group: exp0426
   name: pnp_agilex_3view
 
 checkpoint:
@@ -49,6 +49,7 @@ dataloader_train:
     single_base_index: false
     deterministic_uniform_sampling: false
     embodiment_override: new_agilex_3view
+    timestep_interval_override: 4
 
 dataloader_val:
   batch_size: 4
@@ -61,3 +62,4 @@ dataloader_val:
     single_base_index: false
     deterministic_uniform_sampling: false
     embodiment_override: new_agilex_3view
+    timestep_interval_override: 4

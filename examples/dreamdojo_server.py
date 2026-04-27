@@ -30,6 +30,7 @@ Example client call (Python):
 import argparse
 import base64
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -75,6 +76,20 @@ class ServerValueExpert:
         per_window_values = values.squeeze(0).cpu().numpy()
 
         if len(per_window_values) == 0: return float("inf")
+        # Score the *end* of the predicted future: candidates that diverge in
+        # outcome usually look identical in the early windows but split at the
+        # tail. Aggregating the last-K windows lets late-stage failure/success
+        # signal dominate the score instead of being diluted by the bland
+        # opening frames.
+        agg_mode = os.environ.get("DD_SCORE_AGG", "tail3").lower()
+        K = int(os.environ.get("DD_SCORE_TAIL_K", "3"))
+        if agg_mode == "tail1":
+            return float(per_window_values[-1])
+        if agg_mode == "tail3":
+            return float(np.mean(per_window_values[-K:]))
+        if agg_mode == "min":
+            return float(per_window_values.min())
+        # legacy: monotonic-min prefix mean
         min_idx, min_val = 0, per_window_values[0]
         for i in range(1, len(per_window_values)):
             if per_window_values[i] < min_val:

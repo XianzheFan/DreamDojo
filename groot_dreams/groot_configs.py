@@ -5,9 +5,12 @@ from groot_dreams.data.transform.concat import ConcatTransform
 from groot_dreams.data.transform.state_action import StateActionToTensor, StateActionTransform
 
 
-def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_freq10=False, waist_concat=False):
+def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_freq10=False, waist_concat=False, timestep_interval_override=None):
+    def _resolve_stride(default: int) -> int:
+        return int(timestep_interval_override) if timestep_interval_override is not None else default
+
     if embodiment == "gr1":
-        timestep_interval = 2
+        timestep_interval = _resolve_stride(2)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.ego_view_freq20"
         config = {
@@ -37,7 +40,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
             ),
         }
     elif embodiment == "g1":
-        timestep_interval = 2
+        timestep_interval = _resolve_stride(2)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.ego_view"
         config = {
@@ -71,7 +74,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
             ),
         }
     elif embodiment == "yam":
-        timestep_interval = 4
+        timestep_interval = _resolve_stride(4)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.top_camera-images-rgb"
         config = {
@@ -107,7 +110,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
         # Recorded at 10 fps; timestep_interval=2 → every other frame sampled,
         # covering 14 × 2 / 10 = 2.8 s per window (12 action frames = 2.4 s).
         # Action slot in DreamDojo's 384-dim vector: [169:176].
-        timestep_interval = 2
+        timestep_interval = _resolve_stride(2)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.agentview"
         config = {
@@ -132,7 +135,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
         # AgiLex dual-arm robot: 6 joints + 1 gripper per arm = 14-DoF total.
         # Recorded at 30 fps; timestep_interval=4 → every 4th frame sampled.
         # Action slot in DreamDojo's 384-dim vector: [176:190].
-        timestep_interval = 4
+        timestep_interval = _resolve_stride(4)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.cam_high"
         config = {
@@ -163,7 +166,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
         # AgiLex 3-view tiling: same as agilex but uses all 3 cameras
         # (cam_high, cam_left_wrist, cam_right_wrist) tiled into a 2x2 grid.
         # Each view resized to 240x320 (1/4 area), combined into 480x640.
-        timestep_interval = 4
+        timestep_interval = _resolve_stride(4)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_keys = ["video.cam_high", "video.cam_left_wrist", "video.cam_right_wrist"]
         tiled_video_key = "video.cam_tiled"
@@ -194,7 +197,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
     elif embodiment == "bridge_orig":
         # Bridge V2 original (SimplerEnv): single-arm WidowX, 7-DoF action, 8-dim state.
         # Recorded at 5 fps; timestep_interval=1 (use every frame).
-        timestep_interval = 1
+        timestep_interval = _resolve_stride(1)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.image_0"
         config = {
@@ -220,7 +223,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
         # Google Fractal (SimplerEnv): single-arm, 7-DoF action, 8-dim state.
         # Recorded at 3 fps; timestep_interval=1 (use every frame).
         # Action slot in DreamDojo's 384-dim vector: [190:197].
-        timestep_interval = 1
+        timestep_interval = _resolve_stride(1)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.image"
         config = {
@@ -242,7 +245,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
             ),
         }
     elif embodiment == "agibot":
-        timestep_interval = 4
+        timestep_interval = _resolve_stride(4)
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
         video_key = "video.top_head" if not agibot_pad_freq10 else "video.top_head_pad_freq10"
         config = {

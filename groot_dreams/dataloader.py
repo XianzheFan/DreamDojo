@@ -54,6 +54,7 @@ class VideoActionDataset(torch.utils.data.Dataset):
         agibot_pad_freq10=False,
         waist_concat=False,
         single_base_index=False,
+        timestep_interval_override=None,
     ):
         self.dataset_path = dataset_path
         self.num_frames = num_frames
@@ -62,8 +63,16 @@ class VideoActionDataset(torch.utils.data.Dataset):
         self.width = width
 
         config, train_transform, test_transform = construct_modality_config_and_transforms(
-            num_frames=(num_frames + 1), embodiment=embodiment, agibot_pad_freq10=agibot_pad_freq10, waist_concat=waist_concat
+            num_frames=(num_frames + 1), embodiment=embodiment, agibot_pad_freq10=agibot_pad_freq10, waist_concat=waist_concat,
+            timestep_interval_override=timestep_interval_override,
         )  # Add an additional prefix frame as baseline to compute delta actions
+        video_di = config["video"].delta_indices
+        effective_stride = (video_di[-1] - video_di[-2]) if len(video_di) >= 2 else 1
+        print(
+            f"[DreamDojo dataset] {data_split}: embodiment={embodiment} num_frames={num_frames} "
+            f"stride={effective_stride} delta_indices={list(video_di)}"
+            + (f" (override={timestep_interval_override})" if timestep_interval_override is not None else "")
+        )
         self.lerobot_dataset = WrappedLeRobotSingleDataset(
             dataset_path=dataset_path,
             modality_configs=config,
@@ -127,6 +136,7 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
 
         cr1_embeddings_path=None,
         embodiment_override=None,
+        timestep_interval_override=None,
     ):
         if args is not None:
             dataset_path = args.dataset_path
@@ -184,6 +194,7 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
                     agibot_pad_freq10=False,
                     waist_concat=False,
                     single_base_index=single_base_index,
+                    timestep_interval_override=timestep_interval_override,
                 ))
                 print(f"Created VideoActionDataset for {path}")
 

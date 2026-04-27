@@ -68,7 +68,13 @@ def init() -> int | None:
         timeout_seconds = os.getenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", 1800)
         # Convert the timeout to an integer (if it isn't already) and then to a timedelta
         timeout_timedelta = timedelta(seconds=int(timeout_seconds))
-        dist.init_process_group(backend="nccl", init_method="env://", timeout=timeout_timedelta)
+        # Use cuda:nccl + cpu:gloo so the default PG can broadcast CPU tensors
+        # too — needed e.g. for set_model_state_dict(broadcast_from_rank0=True)
+        # when a model (e.g. text encoder) is held on CPU. Pure NCCL has no CPU
+        # backend and would raise "No backend type associated with device type cpu".
+        dist.init_process_group(
+            backend="cuda:nccl,cpu:gloo", init_method="env://", timeout=timeout_timedelta
+        )
         log.critical(
             f"Initialized distributed training with local rank {local_rank} with timeout {timeout_seconds}",
             rank0_only=False,
