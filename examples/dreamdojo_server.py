@@ -27,7 +27,6 @@ Example client call (Python):
     })
     print(resp.json()["save_path"])
 """
-from datetime import datetime
 import argparse
 import base64
 import json
@@ -108,6 +107,7 @@ class GenerateResponse(BaseModel):
 app = FastAPI(title="DreamDojo API")
 _model: Video2WorldInference | None = None
 _save_dir: Path | None = None
+_server_id: str | None = None
 _cp_size: int = 1
 _fps: int = 10
 # Action preprocessing config (set at startup)
@@ -325,9 +325,23 @@ def generate(req: GenerateRequest):
         torch.clamp((video[0] + 1) / 2, 0, 1) * 255
     ).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = Path(req.save_name).name
-    save_path = Path("output") / timestamp / f"{safe_name}.mp4"
+    # Resolve save path under --save-dir, preserving any subdirs in req.save_name
+    # (e.g. "frame100/chunk_0" -> "<save_dir>/frame100/chunk_0.mp4").
+    # Sanitize: strip absolute roots and ".." parts to prevent path traversal.
+    rel = Path(req.save_name)
+    parts = [p for p in rel.parts if p not in ("..", "/", "\\", "")]
+    rel = Path(*parts) if parts else Path("output")
+    # Tag filename with server id so 4 parallel servers don't collide on the same save_name.
+    if _server_id is not None:
+        rel = rel.with_name(f"{rel.name}_s{_server_id}")
+    base = (_save_dir / rel).with_suffix("")
+
+    # Always tag with _ep<N>, starting from ep0; bump until we find an unused index.
+    i = 0
+    while base.with_name(f"{base.name}_ep{i}.mp4").exists():
+        i += 1
+    save_path = base.with_name(f"{base.name}_ep{i}.mp4")
+
     save_path.parent.mkdir(parents=True, exist_ok=True)
     mediapy.write_video(str(save_path), video_np, fps=_fps)
 
@@ -335,6 +349,9 @@ def generate(req: GenerateRequest):
     if _server_value_expert is not None:
         final_score = _server_value_expert.score_video_tensor(video)
         print(f"[ValueExpert] In-memory score computed: {final_score:.4f}", flush=True)
+        score_path = save_path.with_suffix(".json")
+        with open(score_path, "w") as f:
+            json.dump({"score": float(final_score), "video": save_path.name}, f)
 
     return GenerateResponse(save_path=str(save_path), score=final_score)
 
@@ -347,6 +364,9 @@ def parse_args():
     parser.add_argument("--config-file", default="cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py")
     parser.add_argument("--port",        type=int, default=8000)
     parser.add_argument("--host",        default="0.0.0.0")
+    parser.add_argument("--server-id",   default=None,
+                        help="Tag appended to saved filenames as _s<id> to disambiguate parallel servers "
+                             "writing to a shared --save-dir. Omit for no tag.")
     parser.add_argument("--context-parallel-size", type=int, default=1,
                         help="Number of GPUs per server for context parallelism")
     parser.add_argument("--action-slot-start", type=int, default=169,
@@ -370,9 +390,10 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    _save_dir = Path(args.save_dir)
-    _cp_size  = args.context_parallel_size
-    _fps      = args.fps
+    _save_dir  = Path(args.save_dir)
+    _server_id = args.server_id
+    _cp_size   = args.context_parallel_size
+    _fps       = args.fps
 
     _action_slot_start  = args.action_slot_start
     _action_slot_end    = args.action_slot_end
