@@ -180,6 +180,7 @@ class Text2WorldModelRectifiedFlow(ImaginaireModel):
             # cpu/cuda device mismatches at forward (e.g. DTensor.full_tensor()
             # all-gathers on CUDA while CPU-derived position_ids stay on CPU).
             self.text_encoder = TextEncoder(self.config.text_encoder_config, device="cuda")
+            # self.text_encoder = TextEncoder(self.config.text_encoder_config, device="cpu")
 
         self.lam = LAM(
             image_channels=3,
