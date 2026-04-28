@@ -103,7 +103,7 @@ _server_value_expert = None
 
 
 class GenerateRequest(BaseModel):
-    frame: str          # base64-encoded raw bytes of a uint8 HWC RGB image
+    frame: str          # base64-encoded raw bytes of a uint8 HWC RGB image (cam_high)
     frame_height: int   # image height in pixels
     frame_width: int    # image width in pixels
     actions: list[list[float]]  # shape (T, action_dim)
@@ -112,6 +112,11 @@ class GenerateRequest(BaseModel):
     seed: int = 0
     guidance: float = 0.0
     num_latent_conditional_frames: int = 1
+    # Optional extra views for agilex_3view / new_agilex_3view 2x2-tile training.
+    # When both are present, server tiles (top, left, right, blank) into a single
+    # 480x640 canvas matching the VideoTile transform used in training.
+    frame_left: str | None = None   # base64-encoded uint8 HWC RGB image (cam_left_wrist)
+    frame_right: str | None = None  # base64-encoded uint8 HWC RGB image (cam_right_wrist)
 
 
 class GenerateResponse(BaseModel):
@@ -208,6 +213,27 @@ def _build_vid_input(frame_np: np.ndarray, num_frames: int) -> torch.Tensor:
     return vid_input
 
 
+def _tile_3view(top_np: np.ndarray, left_np: np.ndarray, right_np: np.ndarray) -> np.ndarray:
+    """Tile (top, left, right, blank) into a 480x640 2x2 canvas matching the
+    VideoTile transform used by agilex_3view / new_agilex_3view training.
+
+    Layout (row-major, training modality order = [cam_high, cam_left_wrist, cam_right_wrist]):
+        (0,0) cam_high       -> top
+        (0,1) cam_left_wrist -> left
+        (1,0) cam_right_wrist-> right
+        (1,1) zeros
+    Each input is bilinearly resized to 240x320.
+    """
+    import cv2
+    H, W = 480, 640
+    h, w = H // 2, W // 2  # 240, 320
+    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+    canvas[:h, :w] = cv2.resize(top_np,   (w, h), interpolation=cv2.INTER_LINEAR)
+    canvas[:h, w:] = cv2.resize(left_np,  (w, h), interpolation=cv2.INTER_LINEAR)
+    canvas[h:, :w] = cv2.resize(right_np, (w, h), interpolation=cv2.INTER_LINEAR)
+    return canvas
+
+
 def _broadcast_inputs(vid_input, action, seed, guidance, num_latent_conditional_frames, prompt=""):
     """Broadcast inference inputs from rank 0 to all CP ranks."""
     device = torch.device("cuda")
@@ -298,12 +324,31 @@ def generate(req: GenerateRequest):
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    # Decode and resize frame
-    raw = base64.b64decode(req.frame)
-    frame_np = np.frombuffer(raw, dtype=np.uint8).reshape(req.frame_height, req.frame_width, 3)
+    # Decode and resize frames
+    def _decode(b64: str) -> np.ndarray:
+        raw = base64.b64decode(b64)
+        return np.frombuffer(raw, dtype=np.uint8).reshape(req.frame_height, req.frame_width, 3)
+
+    frame_np = _decode(req.frame)
     if frame_np.shape[:2] != (480, 640):
         import cv2
         frame_np = cv2.resize(frame_np, (640, 480))
+
+    if req.frame_left is not None and req.frame_right is not None:
+        left_np  = _decode(req.frame_left)
+        right_np = _decode(req.frame_right)
+        if left_np.shape[:2]  != (480, 640):
+            import cv2
+            left_np  = cv2.resize(left_np,  (640, 480))
+        if right_np.shape[:2] != (480, 640):
+            import cv2
+            right_np = cv2.resize(right_np, (640, 480))
+        cond_np = _tile_3view(frame_np, left_np, right_np)
+    else:
+        # Legacy single-view path. For agilex_3view / new_agilex_3view models
+        # this puts the cam_high image into all 4 cells worth of space and is
+        # out-of-distribution; clients should send all 3 views.
+        cond_np = frame_np
 
     actions   = np.array(req.actions, dtype=np.float32)   # (T, raw_action_dim)
     # DEBUG: log received actions for diagnostics
@@ -312,7 +357,7 @@ def generate(req: GenerateRequest):
           f"min={actions.min():.4f}, max={actions.max():.4f}", flush=True)
     print(f"[DEBUG] Actions[0]: {actions[0]}", flush=True)
     model_required_frames = _model.model.tokenizer.get_pixel_num_frames(_model.model.config.state_t)
-    vid_input  = _build_vid_input(frame_np, model_required_frames)
+    vid_input  = _build_vid_input(cond_np, model_required_frames)
     action_t   = _preprocess_actions(actions)              # (model_action_chunk, model_action_dim)
     # DEBUG: log preprocessed deltas
     _deltas = action_t[:, _action_slot_start:_action_slot_end].numpy()
