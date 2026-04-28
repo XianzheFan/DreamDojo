@@ -124,7 +124,7 @@ _model: Video2WorldInference | None = None
 _save_dir: Path | None = None
 _server_id: str | None = None
 _cp_size: int = 1
-_fps: int = 10
+_fps: int = 8
 # Action preprocessing config (set at startup)
 _action_slot_start  = 169   # where raw actions go in the 384-dim embodiment vector
 _action_slot_end    = 176   # exclusive end index (169:176 = LIBERO 7-DoF)
@@ -392,8 +392,8 @@ def parse_args():
                         help="Total action dim expected by the model (default: 384)")
     parser.add_argument("--model-action-chunk", type=int, default=12,
                         help="num_action_per_chunk expected by the model (default: 12)")
-    parser.add_argument("--fps", type=int, default=10,
-                        help="FPS for saved mp4 videos (should match training data fps, e.g. 3=Fractal, 5=Bridge, 10=LIBERO)")
+    parser.add_argument("--fps", type=int, default=8,
+                        help="FPS for saved mp4 videos (should match training data fps, e.g. 3=Fractal, 5=Bridge, 10=LIBERO, 8≈new_agilex_3view 7.5fps)")
     parser.add_argument("--value-expert-ckpt", type=str, default=None,
                         help="Path to DINOv2 Value Expert model for in-memory scoring")
     parser.add_argument("--stats-json", type=str, default=None,
