@@ -32,7 +32,11 @@ import base64
 import json
 import os
 import threading
+import time
 from pathlib import Path
+
+_YELLOW = "\033[93m"
+_RESET = "\033[0m"
 
 import mediapy
 import numpy as np
@@ -341,7 +345,12 @@ def generate(req: GenerateRequest):
                 req.seed, req.guidance, req.num_latent_conditional_frames, req.prompt
             )
 
+        _t_dd = time.perf_counter()
         video = _run_inference(vid_input, action_t, seed, guidance, num_lcf, prompt)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        _dd_ms = (time.perf_counter() - _t_dd) * 1000.0
+        print(f"{_YELLOW}[DreamDojo] world-model latency: {_dd_ms:.1f} ms{_RESET}", flush=True)
 
     # Decode: (1, C, T, H, W) -> (T, H, W, C) uint8
     video_np = (
@@ -370,6 +379,7 @@ def generate(req: GenerateRequest):
 
     final_score = None
     if _server_value_model is not None:
+        _t_vm = time.perf_counter()
         final_score = _server_value_model.score(
             obs_uint8_hwc=cond_np,
             future_uint8_thwc=video_np[1:],   # drop conditioning frame, keep predicted future
@@ -377,7 +387,8 @@ def generate(req: GenerateRequest):
             state=req.state,
             task=req.task,
         )
-        print(f"[ValueModel] In-memory score computed: {final_score:.4f}", flush=True)
+        _vm_ms = (time.perf_counter() - _t_vm) * 1000.0
+        print(f"{_YELLOW}[ValueModel] latency: {_vm_ms:.1f} ms | score: {final_score:.4f}{_RESET}", flush=True)
 
     # Per-video sidecar for train_value_model.py pack --source mixed/dreamdojo.
     # Format matches `_pack_dream_entries` so a single jq/python pass can

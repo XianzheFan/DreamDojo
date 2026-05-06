@@ -37,6 +37,9 @@ import threading
 import time
 from pathlib import Path
 
+_YELLOW = "\033[93m"
+_RESET = "\033[0m"
+
 import mediapy
 import numpy as np
 import torch
@@ -370,10 +373,11 @@ def generate(req: GenerateRequest):
         else:
             seed = req.seed
 
-        t0 = time.time()
+        _t_dd = time.perf_counter()
         video = _run_inference(cond_frame_uint8, action_t, seed)
         torch.cuda.synchronize()
-        print(f"[DEBUG] Distill inference took {(time.time()-t0)*1000:.0f}ms", flush=True)
+        _dd_ms = (time.perf_counter() - _t_dd) * 1000.0
+        print(f"{_YELLOW}[DreamDojo-distill] world-model latency: {_dd_ms:.1f} ms{_RESET}", flush=True)
 
     video_np = (
         torch.clamp((video[0] + 1) / 2, 0, 1) * 255
@@ -396,6 +400,7 @@ def generate(req: GenerateRequest):
 
     final_score = None
     if _server_value_model is not None:
+        _t_vm = time.perf_counter()
         final_score = _server_value_model.score(
             obs_uint8_hwc=cond_np,
             future_uint8_thwc=video_np[1:],
@@ -403,7 +408,8 @@ def generate(req: GenerateRequest):
             state=req.state,
             task=req.task,
         )
-        print(f"[ValueModel] In-memory score: {final_score:.4f}", flush=True)
+        _vm_ms = (time.perf_counter() - _t_vm) * 1000.0
+        print(f"{_YELLOW}[ValueModel] latency: {_vm_ms:.1f} ms | score: {final_score:.4f}{_RESET}", flush=True)
 
     sidecar = {
         "video": str(save_path.resolve()),
