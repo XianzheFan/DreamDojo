@@ -40,6 +40,24 @@ from pathlib import Path
 _YELLOW = "\033[93m"
 _RESET = "\033[0m"
 
+_ROLLOUT_STAMP_TTL_S = 300.0
+_rollout_stamp_lock = threading.Lock()
+_rollout_stamps: dict[str, tuple[str, float]] = {}
+
+def _stamp_rollout_prefix(parts: list[str]) -> list[str]:
+    if not parts:
+        return parts
+    rollout_prefix = parts[0]
+    now = time.time()
+    with _rollout_stamp_lock:
+        entry = _rollout_stamps.get(rollout_prefix)
+        if entry is None or now - entry[1] > _ROLLOUT_STAMP_TTL_S:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+        else:
+            stamp = entry[0]
+        _rollout_stamps[rollout_prefix] = (stamp, now)
+    return [f"{rollout_prefix}_{stamp}", *parts[1:]]
+
 import mediapy
 import numpy as np
 import torch
@@ -385,6 +403,7 @@ def generate(req: GenerateRequest):
 
     rel = Path(req.save_name)
     parts = [p for p in rel.parts if p not in ("..", "/", "\\", "")]
+    parts = _stamp_rollout_prefix(parts)
     rel = Path(*parts) if parts else Path("output")
     if _server_id is not None:
         rel = rel.with_name(f"{rel.name}_s{_server_id}")

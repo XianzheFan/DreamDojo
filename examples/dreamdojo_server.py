@@ -38,6 +38,24 @@ from pathlib import Path
 _YELLOW = "\033[93m"
 _RESET = "\033[0m"
 
+_ROLLOUT_STAMP_TTL_S = 300.0
+_rollout_stamp_lock = threading.Lock()
+_rollout_stamps: dict[str, tuple[str, float]] = {}
+
+def _stamp_rollout_prefix(parts: list[str]) -> list[str]:
+    if not parts:
+        return parts
+    rollout_prefix = parts[0]
+    now = time.time()
+    with _rollout_stamp_lock:
+        entry = _rollout_stamps.get(rollout_prefix)
+        if entry is None or now - entry[1] > _ROLLOUT_STAMP_TTL_S:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+        else:
+            stamp = entry[0]
+        _rollout_stamps[rollout_prefix] = (stamp, now)
+    return [f"{rollout_prefix}_{stamp}", *parts[1:]]
+
 def _install_text_embedding_cache(model_inference) -> int:
     encoder = getattr(getattr(model_inference, "model", None), "text_encoder", None)
     if encoder is None or not hasattr(encoder, "compute_text_embeddings_online"):
@@ -385,6 +403,7 @@ def generate(req: GenerateRequest):
     # Sanitize: strip absolute roots and ".." parts to prevent path traversal.
     rel = Path(req.save_name)
     parts = [p for p in rel.parts if p not in ("..", "/", "\\", "")]
+    parts = _stamp_rollout_prefix(parts)
     rel = Path(*parts) if parts else Path("output")
     # Tag filename with server id so 4 parallel servers don't collide on the same save_name.
     if _server_id is not None:
