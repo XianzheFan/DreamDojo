@@ -38,6 +38,29 @@ from pathlib import Path
 _YELLOW = "\033[93m"
 _RESET = "\033[0m"
 
+def _install_text_embedding_cache(model_inference) -> int:
+    encoder = getattr(getattr(model_inference, "model", None), "text_encoder", None)
+    if encoder is None or not hasattr(encoder, "compute_text_embeddings_online"):
+        print(f"{_YELLOW}[TextEmb] no encoder.compute_text_embeddings_online; cache disabled{_RESET}", flush=True)
+        return 0
+    if getattr(encoder, "_dreamdojo_cache_installed", False):
+        return 0
+    original = encoder.compute_text_embeddings_online
+    cache: dict[tuple, torch.Tensor] = {}
+    def _cached(data_batch, input_caption_key, **kwargs):
+        captions = data_batch.get(input_caption_key) if data_batch else None
+        key = (input_caption_key, tuple(captions) if isinstance(captions, (list, tuple)) else captions)
+        hit = key in cache
+        if not hit:
+            cache[key] = original(data_batch=data_batch, input_caption_key=input_caption_key, **kwargs)
+        suffix = "hit" if hit else "miss"
+        print(f"{_YELLOW}[TextEmb] {suffix} key={key[1]}{_RESET}", flush=True)
+        return cache[key]
+    encoder.compute_text_embeddings_online = _cached
+    encoder._dreamdojo_cache_installed = True
+    print(f"{_YELLOW}[TextEmb] cache installed on {type(encoder).__name__}.compute_text_embeddings_online{_RESET}", flush=True)
+    return 1
+
 import mediapy
 import numpy as np
 import torch
@@ -485,6 +508,7 @@ if __name__ == "__main__":
         context_parallel_size=_cp_size,
         config_file=args.config_file,
     )
+    _install_text_embedding_cache(_model)
     state_t = _model.model.config.state_t
     if _cp_size > 1 and state_t % _cp_size != 0:
         raise ValueError(
