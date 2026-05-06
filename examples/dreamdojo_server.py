@@ -47,59 +47,9 @@ from cosmos_oss.init import init_environment
 from cosmos_predict2._src.predict2.inference.video2world import Video2WorldInference
 from cosmos_predict2.config import DEFAULT_NEGATIVE_PROMPT
 
-from train_dinov2_value_expert import DINOv2ValueExpert
+from value_model import ServerValueModel
 
-class ServerValueExpert:
-    def __init__(self, checkpoint_path: str, device: str = "cuda"):
-        self.device = torch.device(device)
-        self.num_clip_frames = 4
-        self.model = DINOv2ValueExpert(
-            num_clip_frames=self.num_clip_frames,
-            dinov2_model="dinov2_vitb14",
-            attn_heads=8, attn_layers=2, hidden_dim=512, freeze_backbone=True
-        )
-        self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device, weights_only=True))
-        self.model.to(self.device).eval()
-
-    @torch.no_grad()
-    def score_video_tensor(self, video_tensor: torch.Tensor) -> float:
-        vid_01 = torch.clamp((video_tensor + 1.0) / 2.0, 0.0, 1.0)
-        vid_expert = vid_01.permute(0, 2, 1, 3, 4).contiguous()
-
-        T = vid_expert.shape[1]
-        if T < self.num_clip_frames:
-            pad_len = self.num_clip_frames - T
-            pad = vid_expert[:, -1:].expand(-1, pad_len, -1, -1, -1)
-            vid_expert = torch.cat([vid_expert, pad], dim=1)
-
-        values = self.model.score_video(vid_expert, window_size=self.num_clip_frames, stride=1)
-        per_window_values = values.squeeze(0).cpu().numpy()
-
-        if len(per_window_values) == 0: return float("inf")
-        # Score the *end* of the predicted future: candidates that diverge in
-        # outcome usually look identical in the early windows but split at the
-        # tail. Aggregating the last-K windows lets late-stage failure/success
-        # signal dominate the score instead of being diluted by the bland
-        # opening frames.
-        agg_mode = os.environ.get("DD_SCORE_AGG", "tail3").lower()
-        K = int(os.environ.get("DD_SCORE_TAIL_K", "3"))
-        if agg_mode == "tail1":
-            return float(per_window_values[-1])
-        if agg_mode == "tail3":
-            return float(np.mean(per_window_values[-K:]))
-        if agg_mode == "min":
-            return float(per_window_values.min())
-        # legacy: monotonic-min prefix mean
-        min_idx, min_val = 0, per_window_values[0]
-        for i in range(1, len(per_window_values)):
-            if per_window_values[i] < min_val:
-                min_val = per_window_values[i]
-                min_idx = i
-            elif per_window_values[i] > min_val + 0.05:
-                break
-        return float(np.mean(per_window_values[: min_idx + 1]))
-
-_server_value_expert = None
+_server_value_model: ServerValueModel | None = None
 
 
 class GenerateRequest(BaseModel):
@@ -117,6 +67,19 @@ class GenerateRequest(BaseModel):
     # 480x640 canvas matching the VideoTile transform used in training.
     frame_left: str | None = None   # base64-encoded uint8 HWC RGB image (cam_left_wrist)
     frame_right: str | None = None  # base64-encoded uint8 HWC RGB image (cam_right_wrist)
+    # Optional fields consumed by the value model (ignored when no value
+    # model is loaded). state must match the value model's state_dim;
+    # task is mapped via task_to_id.json shipped with the value ckpt.
+    state: list[float] = []
+    task: str = ""
+    # Optional metadata used by train_value_model.py pack --source mixed.
+    # When source_episode/source_frame are set, pack inherits z from the
+    # matching real-episode clip; otherwise it self-labels from `progress`/
+    # `success`. All optional — server writes whatever is provided.
+    source_episode: int = -1
+    source_frame: int = -1
+    progress: list[float] = []
+    success: list[float] = []
 
 
 class GenerateResponse(BaseModel):
@@ -406,12 +369,36 @@ def generate(req: GenerateRequest):
     mediapy.write_video(str(save_path), video_np, fps=_fps)
 
     final_score = None
-    if _server_value_expert is not None:
-        final_score = _server_value_expert.score_video_tensor(video)
-        print(f"[ValueExpert] In-memory score computed: {final_score:.4f}", flush=True)
-        score_path = save_path.with_suffix(".json")
-        with open(score_path, "w") as f:
-            json.dump({"score": float(final_score), "video": save_path.name}, f)
+    if _server_value_model is not None:
+        final_score = _server_value_model.score(
+            obs_uint8_hwc=cond_np,
+            future_uint8_thwc=video_np[1:],   # drop conditioning frame, keep predicted future
+            actions=actions,                  # raw absolute actions sent by policy
+            state=req.state,
+            task=req.task,
+        )
+        print(f"[ValueModel] In-memory score computed: {final_score:.4f}", flush=True)
+
+    # Per-video sidecar for train_value_model.py pack --source mixed/dreamdojo.
+    # Format matches `_pack_dream_entries` so a single jq/python pass can
+    # gather these into the metadata.json the trainer expects.
+    sidecar = {
+        "video": str(save_path.resolve()),
+        "task": req.task,
+    }
+    if final_score is not None:
+        sidecar["score"] = float(final_score)
+    if req.source_episode >= 0:
+        sidecar["source_episode"] = int(req.source_episode)
+    if req.source_frame >= 0:
+        sidecar["source_frame"] = int(req.source_frame)
+    if req.progress:
+        sidecar["progress"] = list(req.progress)
+    if req.success:
+        sidecar["success"] = list(req.success)
+    score_path = save_path.with_suffix(".json")
+    with open(score_path, "w") as f:
+        json.dump(sidecar, f)
 
     return GenerateResponse(save_path=str(save_path), score=final_score)
 
@@ -439,8 +426,9 @@ def parse_args():
                         help="num_action_per_chunk expected by the model (default: 12)")
     parser.add_argument("--fps", type=int, default=8,
                         help="FPS for saved mp4 videos (should match training data fps, e.g. 3=Fractal, 5=Bridge, 10=LIBERO, 8≈new_agilex_3view 7.5fps)")
-    parser.add_argument("--value-expert-ckpt", type=str, default=None,
-                        help="Path to DINOv2 Value Expert model for in-memory scoring")
+    parser.add_argument("--value-model-ckpt", type=str, default=None,
+                        help="Path to DINOv2 value model checkpoint for in-memory scoring. "
+                             "Training code: workspace/fxz/DreamAvoid/openpi-da/agilex/train_value_model.py")
     parser.add_argument("--stats-json", type=str, default=None,
                         help="Path to dataset stats.json for action min-max normalization. "
                              "If provided, raw actions are normalized to [-1,1] before inference.")
@@ -474,10 +462,10 @@ if __name__ == "__main__":
 
     init_environment()
 
-    if args.value_expert_ckpt:
-        print(f"[DreamDojo] Loading Server Value Expert from {args.value_expert_ckpt}...")
-        _server_value_expert = ServerValueExpert(checkpoint_path=args.value_expert_ckpt)
-        print("[DreamDojo] Server Value Expert loaded.")
+    if args.value_model_ckpt:
+        print(f"[DreamDojo] Loading value model from {args.value_model_ckpt}...")
+        _server_value_model = ServerValueModel(ckpt_path=args.value_model_ckpt)
+        print("[DreamDojo] Value model loaded.")
 
     _model = Video2WorldInference(
         experiment_name=args.experiment,
