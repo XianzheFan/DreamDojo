@@ -220,6 +220,8 @@ class Video2WorldConditionerV2(GeneralConditioner):
 @dataclass(frozen=True)
 class ActionConditionedCondition(Video2WorldCondition):
     action: Optional[torch.Tensor] = None
+    agent_ids: Optional[torch.Tensor] = None
+    shared_video_latent: Optional[torch.Tensor] = None
 
 
 class ActionConditionedConditioner(Video2WorldConditioner):
@@ -231,6 +233,10 @@ class ActionConditionedConditioner(Video2WorldConditioner):
         output = super()._forward(batch, override_dropout_rate)
         assert "action" in batch, "ActionConditionalConditioner requires 'action' in batch"
         output["action"] = batch["action"]
+        if "agent_ids" in batch:
+            output["agent_ids"] = batch["agent_ids"]
+        if "shared_video_latent" in batch:
+            output["shared_video_latent"] = batch["shared_video_latent"]
         return ActionConditionedCondition(**output)
 
 

@@ -27,6 +27,17 @@ class VideoActionDataset(torch.utils.data.Dataset):
         agibot_pad_freq10=False,
         waist_concat=False,
         single_base_index=False,
+        multi_agent=False,
+        multi_agent_stack_transform=False,
+        agent_video_grid=None,
+        agent_video_tile_groups=None,
+        agent_video_output_size=None,
+        shared_video_tile_group=None,
+        shared_video_output_size=None,
+        agent_video_views=None,
+        agent_state_dims=None,
+        agent_action_dims=None,
+        multi_agent_action_dim=384,
     ):
         self.dataset_path = dataset_path
         self.num_frames = num_frames
@@ -35,7 +46,14 @@ class VideoActionDataset(torch.utils.data.Dataset):
         self.width = width
 
         config, train_transform, test_transform = construct_modality_config_and_transforms(
-            num_frames=(num_frames + 1), embodiment=embodiment, agibot_pad_freq10=agibot_pad_freq10, waist_concat=waist_concat
+            num_frames=(num_frames + 1),
+            embodiment=embodiment,
+            agibot_pad_freq10=agibot_pad_freq10,
+            waist_concat=waist_concat,
+            multi_agent=multi_agent_stack_transform,
+            agent_video_views=agent_video_views,
+            agent_state_dims=agent_state_dims,
+            agent_action_dims=agent_action_dims,
         )  # Add an additional prefix frame as baseline to compute delta actions
         self.lerobot_dataset = WrappedLeRobotSingleDataset(
             dataset_path=dataset_path,
@@ -45,6 +63,14 @@ class VideoActionDataset(torch.utils.data.Dataset):
             data_split=data_split,
             num_frames=num_frames,
             single_base_index=single_base_index,
+            multi_agent_output=multi_agent,
+            agent_video_grid=agent_video_grid,
+            agent_video_tile_groups=agent_video_tile_groups,
+            agent_video_output_size=agent_video_output_size,
+            shared_video_tile_group=shared_video_tile_group,
+            shared_video_output_size=shared_video_output_size,
+            agent_action_dims=agent_action_dims,
+            multi_agent_action_dim=multi_agent_action_dim,
         )
         print(f"Loaded lerobot {data_split} dataset from {self.dataset_path} with {len(self)} samples.")
 
@@ -58,8 +84,9 @@ class VideoActionDataset(torch.utils.data.Dataset):
     def __getitem__(self, data_id):
         lerobot_data = self.lerobot_dataset[data_id]
 
-        if lerobot_data["video"].shape[1] != self.num_frames:
-            print(f"Warning: Expected {self.num_frames} frames, but got {lerobot_data['video'].shape[1]} frames. Randomly sampling an item instead.")
+        frame_axis = 2 if lerobot_data["video"].ndim == 5 else 1
+        if lerobot_data["video"].shape[frame_axis] != self.num_frames:
+            print(f"Warning: Expected {self.num_frames} frames, but got {lerobot_data['video'].shape[frame_axis]} frames. Randomly sampling an item instead.")
             return self.__getitem__(random.randint(0, len(self) - 1))
 
         data = {
@@ -69,12 +96,17 @@ class VideoActionDataset(torch.utils.data.Dataset):
             "dataset": self.lerobot_dataset.dataset_name,
             "fps": lerobot_data["fps"],
             "num_frames": lerobot_data["num_frames"],
+            "num_agents": lerobot_data.get("num_agents", 1),
 
             "__key__": lerobot_data["__key__"],
             "padding_mask": lerobot_data["padding_mask"],
             "image_size": lerobot_data["image_size"],
             "ai_caption": lerobot_data["ai_caption"],
         }
+        if "shared_video" in lerobot_data:
+            data["shared_video"] = lerobot_data["shared_video"]
+        if "shared_lam_video" in lerobot_data:
+            data["shared_lam_video"] = lerobot_data["shared_lam_video"]
         return data
 
     def __len__(self):
@@ -99,6 +131,17 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
         restrict_len=None,
 
         cr1_embeddings_path=None,
+        multi_agent=False,
+        multi_agent_stack_transform=False,
+        agent_video_grid=None,
+        agent_video_tile_groups=None,
+        agent_video_output_size=None,
+        shared_video_tile_group=None,
+        shared_video_output_size=None,
+        agent_video_views=None,
+        agent_state_dims=None,
+        agent_action_dims=None,
+        multi_agent_action_dim=384,
     ):
         if args is not None:
             dataset_path = args.dataset_path
@@ -108,6 +151,17 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
             single_base_index = args.single_base_index
             deterministic_uniform_sampling = args.deterministic_uniform_sampling
             dataset_mixing_weights = args.dataset_mixing_weights
+            multi_agent = getattr(args, "multi_agent", multi_agent)
+            multi_agent_stack_transform = getattr(args, "multi_agent_stack_transform", multi_agent_stack_transform)
+            agent_video_grid = getattr(args, "agent_video_grid", agent_video_grid)
+            agent_video_tile_groups = getattr(args, "agent_video_tile_groups", agent_video_tile_groups)
+            agent_video_output_size = getattr(args, "agent_video_output_size", agent_video_output_size)
+            shared_video_tile_group = getattr(args, "shared_video_tile_group", shared_video_tile_group)
+            shared_video_output_size = getattr(args, "shared_video_output_size", shared_video_output_size)
+            agent_video_views = getattr(args, "agent_video_views", agent_video_views)
+            agent_state_dims = getattr(args, "agent_state_dims", agent_state_dims)
+            agent_action_dims = getattr(args, "agent_action_dims", agent_action_dims)
+            multi_agent_action_dim = getattr(args, "multi_agent_action_dim", multi_agent_action_dim)
 
         self.dataset_path = dataset_path
         self.num_frames = num_frames
@@ -165,6 +219,17 @@ class MultiVideoActionDataset(torch.utils.data.Dataset):
                     agibot_pad_freq10=False,
                     waist_concat=False,
                     single_base_index=single_base_index,
+                    multi_agent=multi_agent,
+                    multi_agent_stack_transform=multi_agent_stack_transform,
+                    agent_video_grid=agent_video_grid,
+                    agent_video_tile_groups=agent_video_tile_groups,
+                    agent_video_output_size=agent_video_output_size,
+                    shared_video_tile_group=shared_video_tile_group,
+                    shared_video_output_size=shared_video_output_size,
+                    agent_video_views=agent_video_views,
+                    agent_state_dims=agent_state_dims,
+                    agent_action_dims=agent_action_dims,
+                    multi_agent_action_dim=multi_agent_action_dim,
                 ))
                 print(f"Created VideoActionDataset for {path}")
 

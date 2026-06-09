@@ -860,7 +860,13 @@ class Text2WorldModelRectifiedFlow(ImaginaireModel):
             data_batch["t5_text_embeddings"] = text_embeddings
             data_batch["t5_text_mask"] = torch.ones(text_embeddings.shape[0], text_embeddings.shape[1], device="cuda")
 
-        lam_video = rearrange(data_batch["lam_video"], "b (p t) h w c -> (b p) t h w c", t=2)
+        if hasattr(self, "prepare_action_conditioned_batch"):
+            self.prepare_action_conditioned_batch(data_batch)
+
+        if data_batch["lam_video"].ndim == 5:
+            lam_video = data_batch["lam_video"]
+        else:
+            lam_video = rearrange(data_batch["lam_video"], "b (p t) h w c -> (b p) t h w c", t=2)
         lam_input = {"videos": lam_video}
         with torch.no_grad():
             outputs = self.lam.lam(lam_input)

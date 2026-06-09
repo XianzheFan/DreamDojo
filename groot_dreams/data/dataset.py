@@ -30,6 +30,166 @@ LE_ROBOT_STATS_FILENAME = "meta/stats.json"
 LE_ROBOT_DATA_FILENAME = "data/*/*.parquet"
 
 
+def _as_cthw_video(video) -> torch.Tensor:
+    """Convert transformed video output to ``[C, T, H, W]`` or ``[V, C, T, H, W]``."""
+    if isinstance(video, np.ndarray):
+        video = torch.from_numpy(video)
+    if video.ndim == 5:
+        if video.shape[1] == 1:
+            video = video[:, 0]  # [T, 1, C, H, W] -> [T, C, H, W]
+        elif video.shape[0] == 1:
+            video = video[0]  # [1, T, C, H, W] -> [T, C, H, W]
+        elif video.shape[2] in (1, 3):
+            return video.permute(1, 2, 0, 3, 4).contiguous()  # [T, V, C, H, W] -> [V, C, T, H, W]
+        else:
+            raise ValueError(f"Cannot coerce multi-view video shape {tuple(video.shape)} to [C, T, H, W]")
+    if video.ndim != 4:
+        raise ValueError(f"Expected video shape [T, C, H, W] or [C, T, H, W], got {tuple(video.shape)}")
+    if video.shape[1] in (1, 3):
+        return video.transpose(0, 1)
+    if video.shape[0] in (1, 3):
+        return video
+    raise ValueError(f"Cannot infer channel axis from video shape {tuple(video.shape)}")
+
+
+def _tile_video_list(tiles: list[torch.Tensor]) -> torch.Tensor:
+    if len(tiles) == 1:
+        return tiles[0]
+    channels, num_frames, tile_h, tile_w = tiles[0].shape
+    local_cols = int(np.ceil(np.sqrt(len(tiles))))
+    local_rows = int(np.ceil(len(tiles) / local_cols))
+    out = torch.zeros(
+        channels,
+        num_frames,
+        local_rows * tile_h,
+        local_cols * tile_w,
+        dtype=tiles[0].dtype,
+        device=tiles[0].device,
+    )
+    for i, tile in enumerate(tiles):
+        row = i // local_cols
+        col = i % local_cols
+        out[:, :, row * tile_h : (row + 1) * tile_h, col * tile_w : (col + 1) * tile_w] = tile
+    return out
+
+
+def _tile_group_to_video(frames: torch.Tensor, grid_shape: tuple[int, int], tile_group: list[int]) -> torch.Tensor:
+    """Extract one agent stream from a tiled ``[C, T, H, W]`` video."""
+    rows, cols = grid_shape
+    channels, num_frames, height, width = frames.shape
+    if height % rows != 0 or width % cols != 0:
+        raise ValueError(f"Video size {(height, width)} is not divisible by grid_shape={grid_shape}")
+    tile_h = height // rows
+    tile_w = width // cols
+    tiles = []
+    for tile_idx in tile_group:
+        row = int(tile_idx) // cols
+        col = int(tile_idx) % cols
+        if row >= rows:
+            raise ValueError(f"Tile index {tile_idx} out of range for grid_shape={grid_shape}")
+        tiles.append(frames[:, :, row * tile_h : (row + 1) * tile_h, col * tile_w : (col + 1) * tile_w])
+    return _tile_video_list(tiles)
+
+
+def _view_group_to_video(views: torch.Tensor, view_group: list[int]) -> torch.Tensor:
+    """Extract one agent stream from explicit ``[V, C, T, H, W]`` views."""
+    tiles = []
+    for view_idx in view_group:
+        if int(view_idx) >= views.shape[0]:
+            raise ValueError(f"View index {view_idx} out of range for {views.shape[0]} views")
+        tiles.append(views[int(view_idx)])
+    return _tile_video_list(tiles)
+
+
+def _split_video_grid_by_agent(
+    frames: torch.Tensor,
+    *,
+    grid_shape: tuple[int, int] | None,
+    tile_groups: list[list[int]] | None,
+) -> torch.Tensor:
+    if frames.ndim == 5:
+        if tile_groups is None:
+            return frames
+        return torch.stack([_view_group_to_video(frames, group) for group in tile_groups], dim=0)
+    if grid_shape is None or tile_groups is None:
+        return frames.unsqueeze(0)
+    return torch.stack([_tile_group_to_video(frames, grid_shape, group) for group in tile_groups], dim=0)
+
+
+def _extract_video_group(
+    frames: torch.Tensor,
+    *,
+    grid_shape: tuple[int, int] | None,
+    group: list[int] | None,
+) -> torch.Tensor | None:
+    if group is None:
+        return None
+    if frames.ndim == 5:
+        return _view_group_to_video(frames, group)
+    if grid_shape is None:
+        raise ValueError("shared_video_tile_group requires agent_video_grid when video is a tiled frame")
+    return _tile_group_to_video(frames, grid_shape, group)
+
+
+def _resize_video_frames(frames: torch.Tensor, output_size: tuple[int, int] | None) -> torch.Tensor:
+    if output_size is None:
+        return frames
+    dtype = frames.dtype
+    if frames.ndim == 4:
+        flat = rearrange(frames, "c t h w -> t c h w").float()
+        resized = F.interpolate(flat, output_size, mode="bilinear", align_corners=False)
+        if dtype == torch.uint8:
+            resized = torch.clamp(resized, 0, 255).to(dtype)
+        return rearrange(resized, "t c h w -> c t h w")
+    if frames.ndim == 5:
+        num_agents, _, num_frames, _, _ = frames.shape
+        flat = rearrange(frames, "p c t h w -> (p t) c h w").float()
+        resized = F.interpolate(flat, output_size, mode="bilinear", align_corners=False)
+        if dtype == torch.uint8:
+            resized = torch.clamp(resized, 0, 255).to(dtype)
+        return rearrange(resized, "(p t) c h w -> p c t h w", p=num_agents, t=num_frames)
+    raise ValueError(f"Expected frames [C,T,H,W] or [P,C,T,H,W], got {tuple(frames.shape)}")
+
+
+def _split_action_by_agent_slots(
+    action: torch.Tensor,
+    agent_action_dims: list | None,
+    *,
+    action_dim: int,
+) -> torch.Tensor:
+    if agent_action_dims is None:
+        return action.unsqueeze(0)
+    per_agent = []
+    for agent_slices in agent_action_dims:
+        if len(agent_slices) == 2 and all(isinstance(v, int) for v in agent_slices):
+            slices = [agent_slices]
+        else:
+            slices = agent_slices
+        agent_action = torch.zeros(action.shape[0], action_dim, dtype=action.dtype, device=action.device)
+        for start, end in slices:
+            agent_action[:, start:end] = action[:, start:end]
+        per_agent.append(agent_action)
+    return torch.stack(per_agent, dim=0)
+
+
+def _make_lam_video(frames: torch.Tensor) -> torch.Tensor:
+    """Build LAM input from ``[C, T, H, W]`` or ``[P, C, T, H, W]``."""
+    if frames.ndim == 4:
+        lam_frames = F.interpolate(frames, (240, 320), mode="bilinear")
+        lam_frames = torch.clamp(lam_frames / 255.0, 0, 1)
+        lam_frames = torch.repeat_interleave(lam_frames, 2, dim=1)[:, 1:-1, :, :]
+        return rearrange(lam_frames, "c t h w -> t h w c")
+    if frames.ndim == 5:
+        num_agents, channels, num_frames, height, width = frames.shape
+        flat = rearrange(frames, "p c t h w -> (p t) c h w")
+        lam_frames = F.interpolate(flat, (240, 320), mode="bilinear")
+        lam_frames = torch.clamp(lam_frames / 255.0, 0, 1)
+        lam_frames = rearrange(lam_frames, "(p t) c h w -> p c t h w", p=num_agents, t=num_frames)
+        lam_frames = torch.repeat_interleave(lam_frames, 2, dim=2)[:, :, 1:-1, :, :]
+        return rearrange(lam_frames, "p c t h w -> p t h w c")
+    raise ValueError(f"Expected frames [C,T,H,W] or [P,C,T,H,W], got {tuple(frames.shape)}")
+
+
 def calculate_dataset_statistics(parquet_paths: list[Path]) -> dict:
     """Calculate the dataset statistics of all columns for a list of parquet files."""
     # Dataset statistics
@@ -998,7 +1158,30 @@ class CachedLeRobotSingleDataset(LeRobotSingleDataset):
 
 
 class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
-    def __init__(self, *args, data_split="full", **kwargs):
+    def __init__(
+        self,
+        *args,
+        data_split="full",
+        multi_agent_output: bool = False,
+        agent_video_grid: list[int] | tuple[int, int] | None = None,
+        agent_video_tile_groups: list[list[int]] | None = None,
+        agent_video_output_size: list[int] | tuple[int, int] | None = None,
+        shared_video_tile_group: list[int] | None = None,
+        shared_video_output_size: list[int] | tuple[int, int] | None = None,
+        agent_action_dims: list | None = None,
+        multi_agent_action_dim: int = 384,
+        **kwargs,
+    ):
+        self.multi_agent_output = multi_agent_output
+        self.agent_video_grid = tuple(agent_video_grid) if agent_video_grid is not None else None
+        self.agent_video_tile_groups = agent_video_tile_groups
+        self.agent_video_output_size = tuple(agent_video_output_size) if agent_video_output_size is not None else None
+        self.shared_video_tile_group = shared_video_tile_group
+        self.shared_video_output_size = (
+            tuple(shared_video_output_size) if shared_video_output_size is not None else None
+        )
+        self.agent_action_dims = agent_action_dims
+        self.multi_agent_action_dim = multi_agent_action_dim
         super().__init__(*args, **kwargs)
 
         if data_split == "full":
@@ -1034,15 +1217,34 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
             trajectory_id, base_index = self.all_steps[index]
             original_outputs = self.transforms(self.get_step_data(trajectory_id, base_index))
 
-            frames = torch.from_numpy(original_outputs["video"])
+            frames = _as_cthw_video(original_outputs["video"])
             frames = torch.clamp(frames * 255.0, 0, 255).to(torch.uint8)
-            frames = frames.squeeze(1).transpose(0, 1)  # (T, C, H, W) -> (C, T, H, W)
-            frames = frames[:, 1:, :, :]  # Skip first frame (used only as action baseline)
+            if frames.ndim == 4:
+                frames = frames[:, 1:, :, :]  # Skip first frame (used only as action baseline)
+            elif frames.ndim == 5:
+                frames = frames[:, :, 1:, :, :]
+            else:
+                raise ValueError(f"Unexpected video shape after conversion: {tuple(frames.shape)}")
 
-            lam_frames = F.interpolate(frames, (240, 320), mode="bilinear")
-            lam_frames = torch.clamp(lam_frames / 255.0, 0, 1)
-            lam_frames = torch.repeat_interleave(lam_frames, 2, dim=1)[:, 1:-1, :, :]
-            lam_frames = rearrange(lam_frames, "c t h w -> t h w c")
+            shared_frames = None
+            if self.multi_agent_output:
+                shared_frames = _extract_video_group(
+                    frames,
+                    grid_shape=self.agent_video_grid,
+                    group=self.shared_video_tile_group,
+                )
+                if shared_frames is not None:
+                    shared_frames = _resize_video_frames(shared_frames, self.shared_video_output_size)
+                frames = _split_video_grid_by_agent(
+                    frames,
+                    grid_shape=self.agent_video_grid,
+                    tile_groups=self.agent_video_tile_groups,
+                )
+                frames = _resize_video_frames(frames, self.agent_video_output_size)
+            elif frames.ndim == 5:
+                raise ValueError("Explicit multi-view video requires multi_agent_output=True")
+
+            lam_frames = _make_lam_video(frames)
             
             delta_actions = []
             for t in range(1, len(original_outputs["action"]) - 1, 4):
@@ -1067,20 +1269,35 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
                 action_seq[:, 101:147] = delta_actions
             elif "agibot" in str(self.dataset_path).lower():
                 action_seq[:, 147:169] = delta_actions
+
+            num_agents = frames.shape[0] if self.multi_agent_output else 1
+            if self.multi_agent_output:
+                action_seq = _split_action_by_agent_slots(
+                    action_seq,
+                    self.agent_action_dims,
+                    action_dim=self.multi_agent_action_dim,
+                )
             
             text = ""
             if "annotation.human.coarse_action" in original_outputs:
                 text = original_outputs["annotation.human.coarse_action"][0].split(":")[-1].strip()
 
-            key = action_seq[0:1, :29]
+            base_action_seq = action_seq[0] if self.multi_agent_output else action_seq
+            key = base_action_seq[0:1, :29]
             key[:, :min(original_outputs["state"].shape[1], 29)] = original_outputs["state"][:, :29]
+            if self.multi_agent_output:
+                key = key.unsqueeze(0).repeat(num_agents, 1, 1)
 
             data = {
                 "__key__": key,
                 "action": action_seq,
                 "video": frames,
                 "lam_video": lam_frames,
+                "num_agents": num_agents,
             }
+            if shared_frames is not None:
+                data["shared_video"] = shared_frames
+                data["shared_lam_video"] = _make_lam_video(shared_frames)
 
             # Just add these to fit the interface
             data["fps"] = 4

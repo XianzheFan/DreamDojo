@@ -4,6 +4,7 @@ from .base import (
     ModalityTransform,
 )
 from .concat import ConcatTransform
+from .multi_agent import MultiAgentStackTransform
 from .state_action import (
     StateActionDropout,
     StateActionPerturbation,

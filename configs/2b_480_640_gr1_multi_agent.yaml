@@ -1,0 +1,55 @@
+job:
+  project: dreamdojo
+  group: exp1201
+  name: gr1_multi_agent
+
+trainer:
+  grad_accum_iter: 1
+  callbacks:
+    every_n_sample_reg:
+      every_n: 1000
+      fps: 5
+    every_n_sample_ema:
+      every_n: 1000
+      fps: 5
+
+model_parallel:
+  context_parallel_size: 1
+
+model:
+  config:
+    state_t: 4  # 1 + 12 // 4
+    net:
+      action_dim: 384
+      temporal_compression_ratio: 4
+      num_action_per_chunk: 12
+      zero_init_action_embedder: false
+      num_agents: 2
+      agent_action_merge: mean
+      shared_video_conditioning: true
+      agent_action_dims:
+        - [[0, 7], [14, 20]]   # left arm + left hand/wrist in GR1 compact action slots
+        - [[7, 14], [20, 26]]  # right arm + right hand/wrist in GR1 compact action slots
+
+dataloader_train:
+  batch_size: 4
+
+  dataset:
+    num_frames: 13
+    dataset_path:
+      - datasets/PhysicalAI-Robotics-GR00T-Teleop-GR1/GR1_robot
+    data_split: train
+    single_base_index: false
+    deterministic_uniform_sampling: false
+    multi_agent: true
+    agent_video_grid: [4, 4]
+    shared_video_tile_group: [0]  # main camera tile; adjust to the actual 4x4 layout
+    agent_video_tile_groups:
+      - [1]  # left/wrist-left camera tile
+      - [2]  # right/wrist-right camera tile
+    shared_video_output_size: [480, 640]
+    agent_video_output_size: [480, 640]
+    multi_agent_action_dim: 384
+    agent_action_dims:
+      - [[0, 7], [14, 20]]
+      - [[7, 14], [20, 26]]

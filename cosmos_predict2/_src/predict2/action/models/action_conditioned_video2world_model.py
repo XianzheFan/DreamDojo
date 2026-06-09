@@ -31,6 +31,10 @@ from cosmos_predict2._src.predict2.models.text2world_model import (
     Text2WorldModelConfig,
 )
 from cosmos_predict2._src.predict2.models.text2world_model import DiffusionModel as Text2WorldModel
+from cosmos_predict2._src.predict2.action.models.multi_agent import (
+    encode_shared_video_condition_inplace,
+    prepare_multi_agent_batch_inplace,
+)
 
 NUM_CONDITIONAL_FRAMES_KEY: str = "num_conditional_frames"
 
@@ -90,6 +94,8 @@ class ActionConditionedVideo2WorldModel(Text2WorldModel):
         self, data_batch: dict[str, torch.Tensor]
     ) -> Tuple[Tensor, Tensor, Video2WorldCondition]:
         # generate random number of conditional frames for training
+        prepare_multi_agent_batch_inplace(data_batch, input_video_key=self.input_data_key, net=self.net)
+        encode_shared_video_condition_inplace(self, data_batch)
         raw_state, latent_state, condition = super().get_data_and_condition(data_batch)
         condition = condition.set_video_condition(
             gt_frames=latent_state.to(**self.tensor_kwargs),
@@ -260,6 +266,8 @@ class ActionConditionedVideo2WorldModel(Text2WorldModel):
 
         The returned function is suitable for use in scenarios where a denoised state is required based on both conditioned and unconditioned inputs, with an adjustable level of guidance influence.
         """
+        prepare_multi_agent_batch_inplace(data_batch, input_video_key=self.input_data_key, net=self.net)
+        encode_shared_video_condition_inplace(self, data_batch)
 
         if NUM_CONDITIONAL_FRAMES_KEY in data_batch:
             num_conditional_frames = data_batch[NUM_CONDITIONAL_FRAMES_KEY]

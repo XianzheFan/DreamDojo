@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from .__about__ import __version__ as __version__
 
 
@@ -29,4 +31,5 @@ def _check_cuda_extra():
         )
 
 
-_check_cuda_extra()
+if os.environ.get("COSMOS_PREDICT2_SKIP_CUDA_EXTRA_CHECK") != "1":
+    _check_cuda_extra()

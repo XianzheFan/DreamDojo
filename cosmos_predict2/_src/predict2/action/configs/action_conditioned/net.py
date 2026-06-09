@@ -49,6 +49,10 @@ COSMOS_V1_7B_NET_MININET: LazyDict = L(ActionConditionedMinimalV1LVGDiT)(
     rope_h_extrapolation_ratio=1.0,
     rope_w_extrapolation_ratio=1.0,
     rope_t_extrapolation_ratio=2.0,
+    num_agents=1,
+    agent_action_dims=None,
+    agent_action_merge="mean",
+    shared_video_conditioning=False,
     sac_config=SACConfig(),
 )
 COSMOS_V1_2B_NET_MININET = copy.deepcopy(COSMOS_V1_7B_NET_MININET)
@@ -94,6 +98,10 @@ COSMOS_V1_7B_NET_MININET_ACTION_CHUNK: LazyDict = L(ActionChunkConditionedMinima
     rope_h_extrapolation_ratio=1.0,
     rope_w_extrapolation_ratio=1.0,
     rope_t_extrapolation_ratio=2.0,
+    num_agents=1,
+    agent_action_dims=None,
+    agent_action_merge="mean",
+    shared_video_conditioning=False,
     sac_config=SACConfig(),
 )
 COSMOS_V1_2B_NET_MININET_ACTION_CHUNK = copy.deepcopy(COSMOS_V1_7B_NET_MININET_ACTION_CHUNK)

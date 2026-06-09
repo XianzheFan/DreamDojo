@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import torch
 import torch.amp as amp
@@ -44,18 +44,173 @@ class Mlp(nn.Module):
         return x
 
 
+AgentActionSlices = tuple[tuple[tuple[int, int], ...], ...]
+
+
+def _is_slice_pair(value: Sequence) -> bool:
+    return len(value) == 2 and all(isinstance(v, int) for v in value)
+
+
+def _coerce_agent_action_dims(agent_action_dims: Optional[Sequence[Sequence]]) -> Optional[AgentActionSlices]:
+    if agent_action_dims is None:
+        return None
+
+    dims = []
+    for group in agent_action_dims:
+        if _is_slice_pair(group):
+            slices = ((int(group[0]), int(group[1])),)
+        else:
+            slices = tuple((int(start), int(end)) for start, end in group)
+        for start, end in slices:
+            if start < 0 or end <= start:
+                raise ValueError(f"Invalid agent action slice {(start, end)}")
+        dims.append(slices)
+    return tuple(dims)
+
+
+def _pad_last_dim(x: torch.Tensor, target_dim: int) -> torch.Tensor:
+    if x.shape[-1] == target_dim:
+        return x
+    if x.shape[-1] > target_dim:
+        raise ValueError(f"Action dim {x.shape[-1]} exceeds configured per-agent action_dim {target_dim}")
+    pad_shape = (*x.shape[:-1], target_dim - x.shape[-1])
+    return torch.cat([x, torch.zeros(pad_shape, dtype=x.dtype, device=x.device)], dim=-1)
+
+
+def normalize_multi_agent_action(
+    action: torch.Tensor,
+    *,
+    action_dim: int,
+    num_agents: int = 1,
+    agent_action_dims: Optional[Sequence[Sequence]] = None,
+) -> torch.Tensor:
+    """Return action as ``[B, P, T, D_agent]``.
+
+    DreamDojo's public datasets currently feed a fused ``[B, T, D]`` action
+    vector. Multi-agent training can either pass explicit ``[B, P, T, D]``
+    tensors or configure slices into that fused vector.
+    """
+    dims = _coerce_agent_action_dims(agent_action_dims)
+    if dims is not None:
+        num_agents = len(dims)
+
+    if action.ndim == 4:
+        if dims is not None:
+            raise ValueError("agent_action_dims should only be used with fused [B, T, D] action tensors")
+        if action.shape[1] != num_agents:
+            raise ValueError(f"Expected {num_agents} agents, got action shape {tuple(action.shape)}")
+        return _pad_last_dim(action, action_dim)
+
+    if action.ndim != 3:
+        raise ValueError(f"Expected action shape [B, T, D] or [B, P, T, D], got {tuple(action.shape)}")
+
+    if dims is not None:
+        parts = [
+            _pad_last_dim(
+                torch.cat([action[:, :, start:end] for start, end in agent_slices], dim=-1),
+                action_dim,
+            )
+            for agent_slices in dims
+        ]
+        return torch.stack(parts, dim=1)
+
+    if num_agents > 1:
+        fused_dim = action.shape[-1]
+        expected_dim = num_agents * action_dim
+        if fused_dim == expected_dim:
+            return rearrange(action, "b t (p d) -> b p t d", p=num_agents, d=action_dim)
+        if fused_dim % num_agents == 0:
+            inferred_dim = fused_dim // num_agents
+            split = rearrange(action, "b t (p d) -> b p t d", p=num_agents, d=inferred_dim)
+            return _pad_last_dim(split, action_dim)
+        raise ValueError(
+            f"Cannot split fused action dim {fused_dim} into {num_agents} agents; "
+            "configure agent_action_dims for non-contiguous or padded layouts."
+        )
+
+    return _pad_last_dim(action.unsqueeze(1), action_dim)
+
+
+def merge_agent_embeddings(
+    embedding: torch.Tensor,
+    *,
+    role_embedding: Optional[nn.Embedding],
+    merge: str,
+) -> torch.Tensor:
+    """Merge ``[B, P, ..., D]`` per-agent embeddings into ``[B, ..., D]``."""
+    if embedding.ndim < 3:
+        raise ValueError(f"Expected at least [B, P, D], got {tuple(embedding.shape)}")
+    if role_embedding is not None:
+        num_agents = embedding.shape[1]
+        if num_agents > role_embedding.num_embeddings:
+            raise ValueError(
+                f"Action has {num_agents} agents, but role embedding only supports {role_embedding.num_embeddings}"
+            )
+        role_ids = torch.arange(num_agents, device=embedding.device)
+        role = role_embedding(role_ids).to(dtype=embedding.dtype)
+        view_shape = (1, num_agents, *([1] * (embedding.ndim - 3)), role.shape[-1])
+        embedding = embedding + role.view(view_shape)
+
+    if merge == "mean":
+        return embedding.mean(dim=1)
+    if merge == "sum":
+        return embedding.sum(dim=1)
+    raise ValueError(f"Unsupported agent_action_merge={merge!r}; expected 'mean' or 'sum'")
+
+
+def add_flattened_agent_role(
+    embedding: torch.Tensor,
+    *,
+    role_embedding: Optional[nn.Embedding],
+    agent_ids: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """Add role embeddings to flattened per-agent batches.
+
+    This is the video-side counterpart to ``merge_agent_embeddings``: the
+    dataloader/model may flatten ``[B, P, ...]`` videos to ``[B*P, ...]`` so
+    the existing DiT can process each stream with shared weights. ``agent_ids``
+    preserves which stream came from which agent.
+    """
+    if role_embedding is None or agent_ids is None:
+        return embedding
+    agent_ids = agent_ids.to(device=embedding.device, dtype=torch.long)
+    if agent_ids.ndim != 1:
+        agent_ids = agent_ids.reshape(-1)
+    if agent_ids.shape[0] != embedding.shape[0]:
+        raise ValueError(
+            f"agent_ids length {agent_ids.shape[0]} does not match embedding batch {embedding.shape[0]}"
+        )
+    role = role_embedding(agent_ids).to(dtype=embedding.dtype)
+    view_shape = (embedding.shape[0], *([1] * (embedding.ndim - 2)), role.shape[-1])
+    return embedding + role.view(view_shape)
+
+
+def zero_init_mlp_output(mlp: Mlp) -> None:
+    nn.init.zeros_(mlp.fc2.weight)
+    if mlp.fc2.bias is not None:
+        nn.init.zeros_(mlp.fc2.bias)
+
+
 class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
     def __init__(self, *args, timestep_scale: float = 1.0, **kwargs):
         assert "in_channels" in kwargs, "in_channels must be provided"
+        latent_channels = kwargs["in_channels"]
         kwargs["in_channels"] += 1  # Add 1 for the condition mask
 
         action_dim = kwargs.get("action_dim", 10 * 8)
         if "action_dim" in kwargs:
             del kwargs["action_dim"]
+        self.action_dim = action_dim
+
+        self.agent_action_dims = _coerce_agent_action_dims(kwargs.pop("agent_action_dims", None))
+        self.num_agents = int(kwargs.pop("num_agents", len(self.agent_action_dims) if self.agent_action_dims else 1))
+        self.agent_action_merge = kwargs.pop("agent_action_merge", "mean")
+        self.shared_video_conditioning = bool(kwargs.pop("shared_video_conditioning", False))
 
         num_action_per_chunk = kwargs.get("num_action_per_chunk", 12)
         if "num_action_per_chunk" in kwargs:
             del kwargs["num_action_per_chunk"]
+        self.num_action_per_chunk = num_action_per_chunk
 
         # NOTE: this is not used in the original code, but we need it for the rectified flow model
 
@@ -79,6 +234,86 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
             act_layer=lambda: nn.GELU(approximate="tanh"),
             drop=0,
         )
+        if self.num_agents > 1:
+            self.agent_action_role_B_D = nn.Embedding(self.num_agents, self.model_channels)
+            self.agent_action_role_B_3D = nn.Embedding(self.num_agents, self.model_channels * 3)
+            nn.init.normal_(self.agent_action_role_B_D.weight, std=0.02)
+            nn.init.normal_(self.agent_action_role_B_3D.weight, std=0.02)
+        else:
+            self.agent_action_role_B_D = None
+            self.agent_action_role_B_3D = None
+        if self.shared_video_conditioning:
+            self.shared_video_embedder_B_D = Mlp(
+                in_features=latent_channels,
+                hidden_features=self.model_channels * 4,
+                out_features=self.model_channels,
+                act_layer=lambda: nn.GELU(approximate="tanh"),
+                drop=0,
+            )
+            self.shared_video_embedder_B_3D = Mlp(
+                in_features=latent_channels,
+                hidden_features=self.model_channels * 4,
+                out_features=self.model_channels * 3,
+                act_layer=lambda: nn.GELU(approximate="tanh"),
+                drop=0,
+            )
+            zero_init_mlp_output(self.shared_video_embedder_B_D)
+            zero_init_mlp_output(self.shared_video_embedder_B_3D)
+        else:
+            self.shared_video_embedder_B_D = None
+            self.shared_video_embedder_B_3D = None
+
+    def _get_action_embeddings(
+        self,
+        action: torch.Tensor,
+        agent_ids: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        action_is_flattened_agent = agent_ids is not None and action.ndim == 3
+        action = normalize_multi_agent_action(
+            action,
+            action_dim=self.action_dim,
+            num_agents=1 if action_is_flattened_agent else self.num_agents,
+            agent_action_dims=None if action_is_flattened_agent else self.agent_action_dims,
+        )
+        action = rearrange(action, "b p t d -> b p (t d)")
+        action_emb_B_P_D = self.action_embedder_B_D(action)
+        action_emb_B_P_3D = self.action_embedder_B_3D(action)
+        action_emb_B_D = merge_agent_embeddings(
+            action_emb_B_P_D,
+            role_embedding=self.agent_action_role_B_D,
+            merge=self.agent_action_merge,
+        ).unsqueeze(1)
+        action_emb_B_3D = merge_agent_embeddings(
+            action_emb_B_P_3D,
+            role_embedding=self.agent_action_role_B_3D,
+            merge=self.agent_action_merge,
+        ).unsqueeze(1)
+        action_emb_B_D = add_flattened_agent_role(
+            action_emb_B_D,
+            role_embedding=self.agent_action_role_B_D,
+            agent_ids=agent_ids,
+        )
+        action_emb_B_3D = add_flattened_agent_role(
+            action_emb_B_3D,
+            role_embedding=self.agent_action_role_B_3D,
+            agent_ids=agent_ids,
+        )
+        return action_emb_B_D, action_emb_B_3D
+
+    def _get_shared_video_embeddings(self, shared_video_latent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.shared_video_embedder_B_D is None or self.shared_video_embedder_B_3D is None:
+            raise ValueError("shared_video_latent was provided but shared_video_conditioning is disabled")
+        if shared_video_latent.ndim != 5:
+            raise ValueError(
+                f"Expected shared_video_latent [B,C,T,H,W], got {tuple(shared_video_latent.shape)}"
+            )
+        pooled_B_C = shared_video_latent.mean(dim=(2, 3, 4)).to(
+            dtype=self.shared_video_embedder_B_D.fc1.weight.dtype
+        )
+        return (
+            self.shared_video_embedder_B_D(pooled_B_C).unsqueeze(1),
+            self.shared_video_embedder_B_3D(pooled_B_C).unsqueeze(1),
+        )
 
     def forward(
         self,
@@ -91,6 +326,8 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
         data_type: Optional[DataType] = DataType.VIDEO,
         img_context_emb: Optional[torch.Tensor] = None,
         action: Optional[torch.Tensor] = None,
+        agent_ids: Optional[torch.Tensor] = None,
+        shared_video_latent: Optional[torch.Tensor] = None,
         intermediate_feature_ids: Optional[List[int]] = None,
         **kwargs,
     ) -> torch.Tensor | List[torch.Tensor] | Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -108,9 +345,7 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
         timesteps_B_T = timesteps_B_T * self.timestep_scale
 
         assert action is not None, "action must be provided"
-        action = rearrange(action, "b t d -> b 1 (t d)")
-        action_emb_B_D = self.action_embedder_B_D(action)
-        action_emb_B_3D = self.action_embedder_B_3D(action)
+        action_emb_B_D, action_emb_B_3D = self._get_action_embeddings(action, agent_ids=agent_ids)
 
         assert isinstance(data_type, DataType), (
             f"Expected DataType, got {type(data_type)}. We need discuss this flag later."
@@ -141,6 +376,10 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
             # add action embedding to the timestep embedding and adaln_lora
             t_embedding_B_T_D = t_embedding_B_T_D + action_emb_B_D
             adaln_lora_B_T_3D = adaln_lora_B_T_3D + action_emb_B_3D
+            if shared_video_latent is not None:
+                shared_emb_B_D, shared_emb_B_3D = self._get_shared_video_embeddings(shared_video_latent)
+                t_embedding_B_T_D = t_embedding_B_T_D + shared_emb_B_D.to(dtype=t_embedding_B_T_D.dtype)
+                adaln_lora_B_T_3D = adaln_lora_B_T_3D + shared_emb_B_3D.to(dtype=adaln_lora_B_T_3D.dtype)
 
             t_embedding_B_T_D = self.t_embedding_norm(t_embedding_B_T_D)
 
@@ -189,11 +428,18 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
 class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
     def __init__(self, *args, timestep_scale: float = 1.0, **kwargs):
         assert "in_channels" in kwargs, "in_channels must be provided"
+        latent_channels = kwargs["in_channels"]
         kwargs["in_channels"] += 1  # Add 1 for the condition mask
 
         action_dim = kwargs.get("action_dim", 10 * 8)
         if "action_dim" in kwargs:
             del kwargs["action_dim"]
+        self.action_dim = action_dim
+
+        self.agent_action_dims = _coerce_agent_action_dims(kwargs.pop("agent_action_dims", None))
+        self.num_agents = int(kwargs.pop("num_agents", len(self.agent_action_dims) if self.agent_action_dims else 1))
+        self.agent_action_merge = kwargs.pop("agent_action_merge", "mean")
+        self.shared_video_conditioning = bool(kwargs.pop("shared_video_conditioning", False))
 
         self._num_action_per_latent_frame = kwargs.get("temporal_compression_ratio", 4)
         if "temporal_compression_ratio" in kwargs:
@@ -231,6 +477,102 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
             act_layer=lambda: nn.GELU(approximate="tanh"),
             drop=0,
         )
+        if self.num_agents > 1:
+            self.agent_action_role_B_D = nn.Embedding(self.num_agents, self.model_channels)
+            self.agent_action_role_B_3D = nn.Embedding(self.num_agents, self.model_channels * 3)
+            nn.init.normal_(self.agent_action_role_B_D.weight, std=0.02)
+            nn.init.normal_(self.agent_action_role_B_3D.weight, std=0.02)
+        else:
+            self.agent_action_role_B_D = None
+            self.agent_action_role_B_3D = None
+        if self.shared_video_conditioning:
+            self.shared_video_embedder_B_D = Mlp(
+                in_features=latent_channels,
+                hidden_features=self._hidden_dim_in_action_embedder,
+                out_features=self.model_channels,
+                act_layer=lambda: nn.GELU(approximate="tanh"),
+                drop=0,
+            )
+            self.shared_video_embedder_B_3D = Mlp(
+                in_features=latent_channels,
+                hidden_features=self._hidden_dim_in_action_embedder,
+                out_features=self.model_channels * 3,
+                act_layer=lambda: nn.GELU(approximate="tanh"),
+                drop=0,
+            )
+            zero_init_mlp_output(self.shared_video_embedder_B_D)
+            zero_init_mlp_output(self.shared_video_embedder_B_3D)
+        else:
+            self.shared_video_embedder_B_D = None
+            self.shared_video_embedder_B_3D = None
+
+    def _get_action_embeddings(
+        self,
+        action: torch.Tensor,
+        agent_ids: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        action_is_flattened_agent = agent_ids is not None and action.ndim == 3
+        action = normalize_multi_agent_action(
+            action,
+            action_dim=self.action_dim,
+            num_agents=1 if action_is_flattened_agent else self.num_agents,
+            agent_action_dims=None if action_is_flattened_agent else self.agent_action_dims,
+        )
+        num_actions = action.shape[2]
+        if num_actions % self._num_action_per_latent_frame != 0:
+            raise ValueError(
+                f"Expected action frames ({num_actions}) to be divisible by "
+                f"temporal_compression_ratio ({self._num_action_per_latent_frame})"
+            )
+        action = rearrange(
+            action,
+            "b p (t k) d -> b p t (k d)",
+            k=self._num_action_per_latent_frame,
+        )
+        action_emb_B_P_T_D = self.action_embedder_B_D(action)
+        action_emb_B_P_T_3D = self.action_embedder_B_3D(action)
+        action_emb_B_T_D = merge_agent_embeddings(
+            action_emb_B_P_T_D,
+            role_embedding=self.agent_action_role_B_D,
+            merge=self.agent_action_merge,
+        )
+        action_emb_B_T_3D = merge_agent_embeddings(
+            action_emb_B_P_T_3D,
+            role_embedding=self.agent_action_role_B_3D,
+            merge=self.agent_action_merge,
+        )
+
+        zero_pad_action_emb_B_D = torch.zeros_like(action_emb_B_T_D[:, :1, :], device=action_emb_B_T_D.device)
+        zero_pad_action_emb_B_3D = torch.zeros_like(action_emb_B_T_3D[:, :1, :], device=action_emb_B_T_3D.device)
+
+        action_emb_B_T_D = torch.cat([zero_pad_action_emb_B_D, action_emb_B_T_D], dim=1)
+        action_emb_B_T_3D = torch.cat([zero_pad_action_emb_B_3D, action_emb_B_T_3D], dim=1)
+        action_emb_B_T_D = add_flattened_agent_role(
+            action_emb_B_T_D,
+            role_embedding=self.agent_action_role_B_D,
+            agent_ids=agent_ids,
+        )
+        action_emb_B_T_3D = add_flattened_agent_role(
+            action_emb_B_T_3D,
+            role_embedding=self.agent_action_role_B_3D,
+            agent_ids=agent_ids,
+        )
+        return action_emb_B_T_D, action_emb_B_T_3D
+
+    def _get_shared_video_embeddings(self, shared_video_latent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.shared_video_embedder_B_D is None or self.shared_video_embedder_B_3D is None:
+            raise ValueError("shared_video_latent was provided but shared_video_conditioning is disabled")
+        if shared_video_latent.ndim != 5:
+            raise ValueError(
+                f"Expected shared_video_latent [B,C,T,H,W], got {tuple(shared_video_latent.shape)}"
+            )
+        pooled_B_C = shared_video_latent.mean(dim=(2, 3, 4)).to(
+            dtype=self.shared_video_embedder_B_D.fc1.weight.dtype
+        )
+        return (
+            self.shared_video_embedder_B_D(pooled_B_C).unsqueeze(1),
+            self.shared_video_embedder_B_3D(pooled_B_C).unsqueeze(1),
+        )
 
     def forward(
         self,
@@ -243,6 +585,8 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
         data_type: Optional[DataType] = DataType.VIDEO,
         img_context_emb: Optional[torch.Tensor] = None,
         action: Optional[torch.Tensor] = None,
+        agent_ids: Optional[torch.Tensor] = None,
+        shared_video_latent: Optional[torch.Tensor] = None,
         intermediate_feature_ids: Optional[List[int]] = None,
         **kwargs,
     ) -> torch.Tensor | List[torch.Tensor] | Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -259,18 +603,8 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
         timesteps_B_T = timesteps_B_T * self.timestep_scale
 
         # calculate action embedding
-        num_actions = action.shape[1]
         assert action is not None, "action must be provided"
-        action = rearrange(action, "b t d -> b 1 (t d)")
-        action = rearrange(action, "b 1 (t d) -> b t d", t=num_actions // self._num_action_per_latent_frame)
-        action_emb_B_D = self.action_embedder_B_D(action)
-        action_emb_B_3D = self.action_embedder_B_3D(action)
-
-        zero_pad_action_emb_B_D = torch.zeros_like(action_emb_B_D[:, :1, :], device=action_emb_B_D.device)
-        zero_pad_action_emb_B_3D = torch.zeros_like(action_emb_B_3D[:, :1, :], device=action_emb_B_3D.device)
-
-        action_emb_B_D = torch.cat([zero_pad_action_emb_B_D, action_emb_B_D], dim=1)
-        action_emb_B_3D = torch.cat([zero_pad_action_emb_B_3D, action_emb_B_3D], dim=1)
+        action_emb_B_D, action_emb_B_3D = self._get_action_embeddings(action, agent_ids=agent_ids)
 
         # NOTE: adjust the action embedding according to the number of frames
         # if condition_video_input_mask_B_C_T_H_W is not None and data_type == DataType.VIDEO:
@@ -307,6 +641,10 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
 
             t_embedding_B_T_D = t_embedding_B_T_D + action_emb_B_D
             adaln_lora_B_T_3D = adaln_lora_B_T_3D + action_emb_B_3D
+            if shared_video_latent is not None:
+                shared_emb_B_D, shared_emb_B_3D = self._get_shared_video_embeddings(shared_video_latent)
+                t_embedding_B_T_D = t_embedding_B_T_D + shared_emb_B_D.to(dtype=t_embedding_B_T_D.dtype)
+                adaln_lora_B_T_3D = adaln_lora_B_T_3D + shared_emb_B_3D.to(dtype=adaln_lora_B_T_3D.dtype)
 
             t_embedding_B_T_D = self.t_embedding_norm(t_embedding_B_T_D)
 

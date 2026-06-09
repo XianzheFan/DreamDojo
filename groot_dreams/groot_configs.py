@@ -2,10 +2,20 @@ from groot_dreams.data.dataset import ModalityConfig
 from groot_dreams.data.transform import VideoToTensor, VideoCrop, VideoResize
 from groot_dreams.data.transform.base import ComposedModalityTransform
 from groot_dreams.data.transform.concat import ConcatTransform
+from groot_dreams.data.transform.multi_agent import MultiAgentStackTransform
 from groot_dreams.data.transform.state_action import StateActionToTensor, StateActionTransform
 
 
-def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_freq10=False, waist_concat=False):
+def construct_modality_config_and_transforms(
+    num_frames,
+    embodiment,
+    agibot_pad_freq10=False,
+    waist_concat=False,
+    multi_agent=False,
+    agent_video_views=None,
+    agent_state_dims=None,
+    agent_action_dims=None,
+):
     if embodiment == "gr1":
         timestep_interval = 2
         delta_indices = list(range(0, num_frames * timestep_interval, timestep_interval))
@@ -157,8 +167,7 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
     height = 480
     width = 640
     
-    train_transform = ComposedModalityTransform(
-        transforms=[
+    shared_transforms = [
             VideoToTensor(apply_to=video_modality.modality_keys),
             VideoCrop(apply_to=video_modality.modality_keys),
             VideoResize(apply_to=video_modality.modality_keys, height=height, width=width, interpolation="linear"),
@@ -178,7 +187,18 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
                 state_concat_order=state_modality.modality_keys,
                 action_concat_order=action_modality.modality_keys,
             ),
-        ]
+    ]
+    if multi_agent:
+        shared_transforms.append(
+            MultiAgentStackTransform(
+                agent_video_views=agent_video_views,
+                agent_state_dims=agent_state_dims,
+                agent_action_dims=agent_action_dims,
+            )
+        )
+
+    train_transform = ComposedModalityTransform(
+        transforms=shared_transforms
     )
     test_transform = ComposedModalityTransform(
         transforms=[
@@ -200,6 +220,17 @@ def construct_modality_config_and_transforms(num_frames, embodiment, agibot_pad_
                 video_concat_order=video_modality.modality_keys,
                 state_concat_order=state_modality.modality_keys,
                 action_concat_order=action_modality.modality_keys,
+            ),
+            *(
+                [
+                    MultiAgentStackTransform(
+                        agent_video_views=agent_video_views,
+                        agent_state_dims=agent_state_dims,
+                        agent_action_dims=agent_action_dims,
+                    )
+                ]
+                if multi_agent
+                else []
             ),
         ]
     )
