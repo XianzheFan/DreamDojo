@@ -105,13 +105,18 @@ def normalize_multi_agent_action(
         raise ValueError(f"Expected action shape [B, T, D] or [B, P, T, D], got {tuple(action.shape)}")
 
     if dims is not None:
-        parts = [
-            _pad_last_dim(
-                torch.cat([action[:, :, start:end] for start, end in agent_slices], dim=-1),
-                action_dim,
-            )
-            for agent_slices in dims
-        ]
+        parts = []
+        for agent_slices in dims:
+            agent_action = torch.zeros(*action.shape[:-1], action_dim, dtype=action.dtype, device=action.device)
+            for start, end in agent_slices:
+                if end > action.shape[-1]:
+                    raise ValueError(
+                        f"Agent action slice {(start, end)} exceeds fused action dim {action.shape[-1]}"
+                    )
+                if end > action_dim:
+                    raise ValueError(f"Agent action slice {(start, end)} exceeds per-agent action_dim {action_dim}")
+                agent_action[:, :, start:end] = action[:, :, start:end]
+            parts.append(agent_action)
         return torch.stack(parts, dim=1)
 
     if num_agents > 1:
