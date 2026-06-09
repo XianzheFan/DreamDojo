@@ -105,12 +105,14 @@ def _split_video_grid_by_agent(
     frames: torch.Tensor,
     *,
     grid_shape: tuple[int, int] | None,
+    view_groups: list[list[int]] | None,
     tile_groups: list[list[int]] | None,
 ) -> torch.Tensor:
     if frames.ndim == 5:
-        if tile_groups is None:
+        groups = view_groups if view_groups is not None else tile_groups
+        if groups is None:
             return frames
-        return torch.stack([_view_group_to_video(frames, group) for group in tile_groups], dim=0)
+        return torch.stack([_view_group_to_video(frames, group) for group in groups], dim=0)
     if grid_shape is None or tile_groups is None:
         return frames.unsqueeze(0)
     return torch.stack([_tile_group_to_video(frames, grid_shape, group) for group in tile_groups], dim=0)
@@ -120,14 +122,16 @@ def _extract_video_group(
     frames: torch.Tensor,
     *,
     grid_shape: tuple[int, int] | None,
-    group: list[int] | None,
+    view_group: list[int] | None,
+    tile_group: list[int] | None,
 ) -> torch.Tensor | None:
+    group = view_group if frames.ndim == 5 else tile_group
     if group is None:
         return None
     if frames.ndim == 5:
         return _view_group_to_video(frames, group)
     if grid_shape is None:
-        raise ValueError("shared_video_tile_group requires agent_video_grid when video is a tiled frame")
+        raise ValueError("shared_video_tile_group requires agent_video_grid for tiled-frame fallback")
     return _tile_group_to_video(frames, grid_shape, group)
 
 
@@ -1165,8 +1169,10 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
         multi_agent_output: bool = False,
         agent_video_grid: list[int] | tuple[int, int] | None = None,
         agent_video_tile_groups: list[list[int]] | None = None,
+        agent_video_views: list[list[int]] | None = None,
         agent_video_output_size: list[int] | tuple[int, int] | None = None,
         shared_video_tile_group: list[int] | None = None,
+        shared_video_views: list[int] | None = None,
         shared_video_output_size: list[int] | tuple[int, int] | None = None,
         agent_action_dims: list | None = None,
         multi_agent_action_dim: int = 384,
@@ -1175,8 +1181,10 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
         self.multi_agent_output = multi_agent_output
         self.agent_video_grid = tuple(agent_video_grid) if agent_video_grid is not None else None
         self.agent_video_tile_groups = agent_video_tile_groups
+        self.agent_video_views = agent_video_views
         self.agent_video_output_size = tuple(agent_video_output_size) if agent_video_output_size is not None else None
         self.shared_video_tile_group = shared_video_tile_group
+        self.shared_video_views = shared_video_views
         self.shared_video_output_size = (
             tuple(shared_video_output_size) if shared_video_output_size is not None else None
         )
@@ -1231,13 +1239,15 @@ class WrappedLeRobotSingleDataset(LeRobotSingleDataset):
                 shared_frames = _extract_video_group(
                     frames,
                     grid_shape=self.agent_video_grid,
-                    group=self.shared_video_tile_group,
+                    view_group=self.shared_video_views,
+                    tile_group=self.shared_video_tile_group,
                 )
                 if shared_frames is not None:
                     shared_frames = _resize_video_frames(shared_frames, self.shared_video_output_size)
                 frames = _split_video_grid_by_agent(
                     frames,
                     grid_shape=self.agent_video_grid,
+                    view_groups=self.agent_video_views,
                     tile_groups=self.agent_video_tile_groups,
                 )
                 frames = _resize_video_frames(frames, self.agent_video_output_size)

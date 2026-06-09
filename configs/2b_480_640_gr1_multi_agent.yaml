@@ -42,11 +42,16 @@ dataloader_train:
     single_base_index: false
     deterministic_uniform_sampling: false
     multi_agent: true
-    agent_video_grid: [4, 4]
-    shared_video_tile_group: [0]  # main camera tile; adjust to the actual 4x4 layout
-    agent_video_tile_groups:
-      - [1]  # left/wrist-left camera tile
-      - [2]  # right/wrist-right camera tile
+    # Non-tile path: read separate camera modalities and keep the view axis explicit.
+    # Replace these keys with the actual video.* names in your LeRobot metadata.
+    video_modality_keys:
+      - video.main_camera
+      - video.left_camera
+      - video.right_camera
+    shared_video_views: [0]  # main camera
+    agent_video_views:
+      - [1]  # left/wrist-left camera
+      - [2]  # right/wrist-right camera
     shared_video_output_size: [480, 640]
     agent_video_output_size: [480, 640]
     multi_agent_action_dim: 384

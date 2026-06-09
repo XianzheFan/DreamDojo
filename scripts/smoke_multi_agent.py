@@ -8,7 +8,7 @@ from cosmos_predict2._src.predict2.action.models.multi_agent import (
     encode_shared_video_condition_inplace,
     prepare_multi_agent_batch_inplace,
 )
-from cosmos_predict2._src.predict2.action.networks.action_conditioned_minimal_v1_lvg_dit import (
+from cosmos_predict2._src.predict2.action.models.action_utils import (
     normalize_multi_agent_action,
 )
 

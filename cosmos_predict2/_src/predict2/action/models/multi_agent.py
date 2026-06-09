@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 
-from cosmos_predict2._src.predict2.action.networks.action_conditioned_minimal_v1_lvg_dit import (
+from cosmos_predict2._src.predict2.action.models.action_utils import (
     normalize_multi_agent_action,
 )
 

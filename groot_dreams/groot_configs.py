@@ -11,6 +11,7 @@ def construct_modality_config_and_transforms(
     embodiment,
     agibot_pad_freq10=False,
     waist_concat=False,
+    video_modality_keys=None,
     multi_agent=False,
     agent_video_views=None,
     agent_state_dims=None,
@@ -163,6 +164,12 @@ def construct_modality_config_and_transforms(
             ),
         }
     
+    if video_modality_keys is not None:
+        config["video"].modality_keys = [
+            key if str(key).startswith("video.") else f"video.{key}"
+            for key in video_modality_keys
+        ]
+
     video_modality, state_modality, action_modality = config["video"], config["state"], config["action"]
     height = 480
     width = 640

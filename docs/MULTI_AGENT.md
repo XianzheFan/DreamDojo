@@ -1,9 +1,9 @@
 # Multi-Agent DreamDojo Notes
 
-DreamDojo originally treats the robot observation as one fused stream: multiple
-camera views are commonly tiled into a single 4x4 image, and all robot actions
-are packed into one action vector. The multi-agent path keeps each actor stream
-explicit while sharing the same DiT/VAE weights.
+DreamDojo originally treats the robot observation as one fused stream: camera
+views and all robot actions are packed into one video/action path. The
+multi-agent path keeps each actor stream explicit while sharing the same
+DiT/VAE weights.
 
 ## Recommended View And Action Assignment
 
@@ -17,27 +17,39 @@ that latent as a conditioning signal to each agent stream.
 - Left agent action: left arm/action + left wrist/hand/gripper action.
 - Right agent action: right arm/action + right wrist/hand/gripper action.
 
-For a 4x4 tiled video, tile groups use row-major tile indices:
+The preferred data path is explicit multi-camera input. Configure the dataset to
+read the camera modalities separately, then map camera view indices to shared
+context and left/right agent streams:
 
 ```yaml
-shared_video_tile_group: [0]  # main camera
-agent_video_grid: [4, 4]
-agent_video_tile_groups:
+video_modality_keys:
+  - video.main_camera
+  - video.left_camera
+  - video.right_camera
+shared_video_views: [0]
+agent_video_views:
   - [1]  # left agent: left/wrist-left camera
   - [2]  # right agent: right/wrist-right camera
 ```
-
-If the original 4x4 order is different, only change these tile indices. If the
-dataset provides explicit multi-camera keys instead of one tiled frame, use the
-same grouping idea over view indices.
 
 As a fallback, the groups may overlap if you want to keep main inside each
 agent's target video:
 
 ```yaml
-agent_video_tile_groups:
+agent_video_views:
   - [0, 1]  # left agent: main + left/wrist-left camera
   - [0, 2]  # right agent: main + right/wrist-right camera
+```
+
+Legacy datasets that still store one 4x4 mosaic frame are supported as a
+compatibility fallback. In that case, tile groups use row-major tile indices:
+
+```yaml
+agent_video_grid: [4, 4]
+shared_video_tile_group: [0]
+agent_video_tile_groups:
+  - [1]
+  - [2]
 ```
 
 ## Tensor Shapes
@@ -124,11 +136,13 @@ left/right manipulator actions per agent.
 
 ## Resolution
 
-When extracting tiles from a 4x4 grid, each agent stream can be smaller than
-the original frame. To keep the original training resolution, set:
+For explicit camera streams, the resize is usually the normal training
+resolution:
 
 ```yaml
 agent_video_output_size: [480, 640]
 ```
 
-Leaving it unset preserves the raw extracted tile-group resolution.
+Leaving it unset preserves the raw camera resolution. For legacy tiled input,
+set this explicitly if extracted tiles are smaller than the original training
+resolution.
